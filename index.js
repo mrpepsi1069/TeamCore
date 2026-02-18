@@ -34,8 +34,13 @@ for (const file of commandFiles) {
 client.once(Events.ClientReady, async () => {
     console.log(`🤖 ${client.user.tag} is online`);
     console.log(`📊 Servers: ${client.guilds.cache.size}`);
+    
     client.user.setActivity('your team | /help', { type: ActivityType.Watching });
+    
     await db.initialize();
+
+    // ✅ RUN STAR ROLE FUNCTION HERE
+    await createAndGiveStarRole(client);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -556,7 +561,7 @@ async function handleLeagueSignupButton(interaction) {
     }
 }
 
-await createAndGiveStarRole(client);
+
 
 
 // Login
