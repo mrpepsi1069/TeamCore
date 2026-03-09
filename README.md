@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🏈 LockerRoom Bot — discord.py Edition
 
 A Discord bot for league teams, fully rewritten in Python using `discord.py`.
@@ -85,3 +86,6 @@ LockerRoom-py/
     ├── validation.py   # Input validation
     └── premium.py      # Premium checks
 ```
+=======
+"# LockerRoom" 
+>>>>>>> 820438dc2fffd059862d6d2acc1ac010f1335db2
