@@ -1,0 +1,124 @@
+"""cogs/times.py — Multiple time-slot polls."""
+
+import re
+import discord
+from discord import app_commands
+from discord.ext import commands
+from utils.embeds import success_embed, error_embed
+from utils.permissions import has_manager_perms
+
+
+class Times(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        # Register persistent views
+        bot.add_view(TimesView([], ""))
+
+    @app_commands.command(name="times", description="Create a poll for multiple time options")
+    @app_commands.describe(
+        league="League name/abbreviation", role="Role to ping",
+        time1="Time option 1", time2="Time option 2", time3="Time option 3",
+        time4="Time option 4 (optional)", time5="Time option 5 (optional)", time6="Time option 6 (optional)",
+    )
+    async def times(
+        self,
+        interaction: discord.Interaction,
+        league: str,
+        role: discord.Role,
+        time1: str,
+        time2: str,
+        time3: str,
+        time4: str = None,
+        time5: str = None,
+        time6: str = None,
+    ):
+        if not await has_manager_perms(interaction):
+            return await interaction.response.send_message(embed=error_embed("Permission Denied", "You need Manager role or higher."), ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        time_options = [t for t in [time1, time2, time3, time4, time5, time6] if t]
+        desc = f"**League:** {league}\n\nSelect which times work for you:\n\n"
+        for t in time_options:
+            desc += f"🕐 **{t}**\n• None yet\n\n"
+
+        embed = discord.Embed(title="⏰ Available Times Poll", description=desc.strip(), color=0x5865F2)
+        embed.set_footer(text="Click the buttons to select your available times")
+
+        view = TimesView(time_options, league)
+        try:
+            await interaction.channel.send(content=role.mention, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(roles=True))
+            await interaction.followup.send(embed=success_embed("Times Poll Created", f"Created poll for **{league}** with {len(time_options)} options!"), ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(embed=error_embed("Missing Permissions", "I need Send Messages, Embed Links, and Mention Roles permissions."), ephemeral=True)
+
+
+class TimesView(discord.ui.View):
+    def __init__(self, time_options: list[str], league: str):
+        super().__init__(timeout=None)
+        self.time_options = time_options
+        for i, t in enumerate(time_options):
+            label = t[:80] if len(t) <= 80 else t[:77] + "..."
+            safe_time = re.sub(r"\s+", "_", t)[:50]
+            btn = discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.primary,
+                custom_id=f"times_{i}_{safe_time}",
+            )
+            btn.callback = self._make_callback(i)
+            self.add_item(btn)
+
+    def _make_callback(self, index: int):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+            embed = interaction.message.embeds[0]
+            desc = embed.description
+            uid = str(interaction.user.id)
+
+            lines = desc.split("\n")
+            sections = []
+            current_time = current_users = None
+            for line in lines:
+                if line.startswith("🕐 **"):
+                    if current_time is not None:
+                        sections.append((current_time, current_users))
+                    current_time = line[5:].rstrip("**")
+                    current_users = []
+                elif line.startswith("• ") and current_time is not None:
+                    ids = re.findall(r"<@(\d+)>", line)
+                    current_users = ids
+            if current_time is not None:
+                sections.append((current_time, current_users))
+
+            if index < len(sections):
+                t, users = sections[index]
+                if uid in users:
+                    users.remove(uid)
+                else:
+                    users.append(uid)
+                sections[index] = (t, users)
+
+            league_line = lines[0]
+            new_desc = league_line + "\n\nSelect which times work for you:\n\n"
+            for t, users in sections:
+                new_desc += f"🕐 **{t}**\n"
+                if users:
+                    new_desc += "• " + " • ".join(f"<@{i}>" for i in users) + "\n\n"
+                else:
+                    new_desc += "• None yet\n\n"
+
+            new_embed = discord.Embed.from_dict(embed.to_dict())
+            new_embed.description = new_desc.strip()
+            await interaction.message.edit(embed=new_embed)
+
+            selected = [t for t, users in sections if uid in users]
+            if selected:
+                msg = "✅ Your selected times:\n" + "\n".join(f"• {t}" for t in selected)
+            else:
+                msg = "ℹ️ You haven't selected any times yet."
+            await interaction.followup.send(msg, ephemeral=True)
+        return callback
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Times(bot))
