@@ -319,10 +319,10 @@
             <h1>🏆 LockerRoom Bot</h1>
             <p>The ultimate Discord bot for managing sports teams and gaming communities</p>
             <div class="btn-group">
-                <a href="#" id="invite-btn" class="btn btn-primary">
+                <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands" id="invite-btn" class="btn btn-primary">
                     <span>➕</span> Add to Discord
                 </a>
-                <a href="#" id="support-btn" class="btn btn-secondary">
+                <a href="https://discord.gg/BkFJuu7DbN" id="support-btn" class="btn btn-secondary">
                     <span>💬</span> Join Support Server
                 </a>
             </div>
@@ -404,107 +404,88 @@
     <!-- Footer -->
     <footer class="footer">
         <p>© 2025 LockerRoom Bot. Made for sports teams and gaming communities.</p>
-        <p style="margin-top: 10px; font-size: 0.9rem;">Powered by Discord.js</p>
+        <p style="margin-top: 10px; font-size: 0.9rem;">Powered by discord.py</p>
     </footer>
 
     <script>
-        // Configuration - Update these with your actual values
-        const CONFIG = {
-            apiUrl: window.location.origin, // Your Render URL
-            inviteUrl: 'https://discord.com/api/oauth2/authorize client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands',
-            supportServerUrl: 'https://discord.gg/BkFJuu7DbN'
-        };
+        // Update this to your hosted bot URL once deployed (e.g. Render or Railway)
+        // Leave as empty string to show offline state while running locally
+        const BOT_API_URL = '';
 
-        // Set invite and support links
-        document.getElementById('invite-btn').href = CONFIG.inviteUrl;
-        document.getElementById('support-btn').href = CONFIG.supportServerUrl;
-
-        // Fetch bot statistics
         async function fetchBotStats() {
+            if (!BOT_API_URL) {
+                document.getElementById('guild-count').textContent = '—';
+                document.getElementById('user-count').textContent = '—';
+                document.getElementById('uptime').innerHTML = '<span style="color: #FEE75C;">🟡 Local</span>';
+                document.getElementById('servers-container').innerHTML = `
+                    <div class="no-data">
+                        🚀 Add LockerRoom to your server to get started!
+                    </div>
+                `;
+                return;
+            }
+
             try {
-                const response = await fetch(CONFIG.apiUrl);
+                const response = await fetch(BOT_API_URL);
                 const data = await response.json();
 
-                // Update statistics
-                document.getElementById('guild-count').textContent = data.guilds || '0';
-                
-                // Calculate total users (if available)
-                const userCount = data.guilds ? data.guilds * 50 : 0; // Estimate
-                document.getElementById('user-count').textContent = userCount.toLocaleString();
+                document.getElementById('guild-count').textContent = data.guilds ?? '0';
+                document.getElementById('user-count').textContent = (data.users ?? 0).toLocaleString();
 
-                // Update status
-                const statusElement = document.getElementById('uptime');
+                const statusEl = document.getElementById('uptime');
                 if (data.status === 'online' && data.bot !== 'Starting') {
-                    statusElement.innerHTML = '<span style="color: #57F287;">🟢 Online</span>';
+                    statusEl.innerHTML = '<span style="color: #57F287;">🟢 Online</span>';
                 } else {
-                    statusElement.innerHTML = '<span style="color: #ED4245;">🔴 Starting...</span>';
+                    statusEl.innerHTML = '<span style="color: #ED4245;">🔴 Starting...</span>';
                 }
 
-                // Fetch server list
                 await fetchServerList(data.guilds);
 
             } catch (error) {
-                console.error('Error fetching bot stats:', error);
-                document.getElementById('guild-count').innerHTML = '<span style="color: #ED4245;">Error</span>';
-                document.getElementById('user-count').innerHTML = '<span style="color: #ED4245;">Error</span>';
+                document.getElementById('guild-count').innerHTML = '<span style="color: #ED4245;">—</span>';
+                document.getElementById('user-count').innerHTML = '<span style="color: #ED4245;">—</span>';
                 document.getElementById('uptime').innerHTML = '<span style="color: #ED4245;">🔴 Offline</span>';
-                
                 document.getElementById('servers-container').innerHTML = `
                     <div class="error-message">
-                        ❌ Unable to fetch server data. The bot may be offline or experiencing issues.
+                        ❌ Unable to reach the bot API. The bot may be offline.
                     </div>
                 `;
             }
         }
 
-        // Fetch server list from API
         async function fetchServerList(guildCount) {
             const container = document.getElementById('servers-container');
-            
             try {
-                const response = await fetch(`${CONFIG.apiUrl}/api/guilds`);
+                const response = await fetch(`${BOT_API_URL}/api/guilds`);
                 const guilds = await response.json();
-                
-                if (guilds.length === 0) {
-                    container.innerHTML = `
-                        <div class="no-data">
-                            Be the first to add LockerRoom to your server! 🚀
-                        </div>
-                    `;
+
+                if (!guilds.length) {
+                    container.innerHTML = `<div class="no-data">Be the first to add LockerRoom to your server! 🚀</div>`;
                     return;
                 }
 
-                const serversHTML = guilds.map(guild => `
-                    <div class="server-card">
-                        <div class="server-name">🏰 ${guild.name}</div>
-                        <div class="server-info">
-                            <span>👥</span>
-                            <span>${guild.memberCount.toLocaleString()} members</span>
+                container.innerHTML = `<div class="servers-grid">${
+                    guilds.map(g => `
+                        <div class="server-card">
+                            <div class="server-name">🏰 ${g.name}</div>
+                            <div class="server-info"><span>👥</span><span>${g.memberCount.toLocaleString()} members</span></div>
+                            <div class="server-info"><span>🆔</span><span>${g.id}</span></div>
                         </div>
-                        <div class="server-info">
-                            <span>🆔</span>
-                            <span>${guild.id}</span>
-                        </div>
-                    </div>
-                `).join('');
+                    `).join('')
+                }</div>`;
 
-                container.innerHTML = `<div class="servers-grid">${serversHTML}</div>`;
-            } catch (error) {
-                console.error('Error fetching servers:', error);
+            } catch {
                 container.innerHTML = `
                     <div class="no-data">
                         🏰 Currently serving <strong>${guildCount}</strong> amazing communities!
                         <br><br>
-                        <small style="color: var(--gray);">Join one of them by adding LockerRoom to your server!</small>
+                        <small style="color: var(--gray);">Add LockerRoom to your server to join them!</small>
                     </div>
                 `;
             }
         }
 
-        // Load stats on page load
         fetchBotStats();
-
-        // Refresh stats every 30 seconds
         setInterval(fetchBotStats, 30000);
     </script>
 </body>
