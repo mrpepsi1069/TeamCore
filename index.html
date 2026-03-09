@@ -410,7 +410,7 @@
     <script>
         // Update this to your hosted bot URL once deployed (e.g. Render or Railway)
         // Leave as empty string to show offline state while running locally
-        const BOT_API_URL = '';
+        const BOT_API_URL = 'https://endless-evangeline-ghostie-bots-7370516d.koyeb.app/v1';
 
         async function fetchBotStats() {
             if (!BOT_API_URL) {
@@ -453,36 +453,15 @@
             }
         }
 
-        async function fetchServerList(guildCount) {
+        function fetchServerList(guildCount) {
             const container = document.getElementById('servers-container');
-            try {
-                const response = await fetch(`${BOT_API_URL}/api/guilds`);
-                const guilds = await response.json();
-
-                if (!guilds.length) {
-                    container.innerHTML = `<div class="no-data">Be the first to add LockerRoom to your server! 🚀</div>`;
-                    return;
-                }
-
-                container.innerHTML = `<div class="servers-grid">${
-                    guilds.map(g => `
-                        <div class="server-card">
-                            <div class="server-name">🏰 ${g.name}</div>
-                            <div class="server-info"><span>👥</span><span>${g.memberCount.toLocaleString()} members</span></div>
-                            <div class="server-info"><span>🆔</span><span>${g.id}</span></div>
-                        </div>
-                    `).join('')
-                }</div>`;
-
-            } catch {
-                container.innerHTML = `
-                    <div class="no-data">
-                        🏰 Currently serving <strong>${guildCount}</strong> amazing communities!
-                        <br><br>
-                        <small style="color: var(--gray);">Add LockerRoom to your server to join them!</small>
-                    </div>
-                `;
-            }
+            container.innerHTML = `
+                <div class="no-data">
+                    🏰 Currently serving <strong style="color: var(--secondary);">${guildCount}</strong> amazing communities!
+                    <br><br>
+                    <small style="color: var(--gray);">Add LockerRoom to your server to join them!</small>
+                </div>
+            `;
         }
 
         fetchBotStats();
