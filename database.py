@@ -514,3 +514,24 @@ async def get_contract_by_message_id(message_id: str):
     if not _check():
         return None
     return await _db.contracts.find_one({"messageId": message_id})
+
+
+# ──────────────────────────────────────────────
+# GLOBAL ANNOUNCEMENT SETTINGS
+# ──────────────────────────────────────────────
+
+async def get_global_pings_disabled(guild_id: str) -> bool:
+    if not _check():
+        return False
+    doc = await _db.global_settings.find_one({"guild_id": guild_id})
+    return bool(doc and doc.get("pings_disabled", False))
+
+
+async def set_global_pings_disabled(guild_id: str, disabled: bool) -> None:
+    if not _check():
+        return
+    await _db.global_settings.update_one(
+        {"guild_id": guild_id},
+        {"$set": {"pings_disabled": disabled}},
+        upsert=True
+    )
