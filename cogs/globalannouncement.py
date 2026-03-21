@@ -42,20 +42,40 @@ class GlobalAnnouncement(commands.Cog):
                 # Find or create the TeamCore Global channel
                 channel = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
 
+                correct_overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
+                    guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True),
+                }
+
                 if channel is None:
-                    # Create the channel
-                    overwrites = {
-                        guild.default_role: discord.PermissionOverwrite(
-                            send_messages=False,
-                            read_messages=True
+                    # Try to create the channel, fall back to system/any channel
+                    try:
+                        channel = await guild.create_text_channel(
+                            name=CHANNEL_NAME,
+                            overwrites=correct_overwrites,
+                            topic="📢 Official announcements from TeamCore Bot",
+                            reason="TeamCore Global Message system"
                         )
-                    }
-                    channel = await guild.create_text_channel(
-                        name=CHANNEL_NAME,
-                        overwrites=overwrites,
-                        topic="📢 Official announcements from TeamCore Bot",
-                        reason="TeamCore Global Message system"
-                    )
+                    except discord.Forbidden:
+                        # No permission to create channel — fall back to system channel or first available
+                        channel = guild.system_channel
+                        if channel is None:
+                            channel = next(
+                                (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
+                                None
+                            )
+                        if channel is None:
+                            failed += 1
+                            continue
+                else:
+                    # Channel already exists — fix permissions silently
+                    try:
+                        await channel.edit(
+                            overwrites=correct_overwrites,
+                            reason="TeamCore Global Message — fixing permissions"
+                        )
+                    except discord.Forbidden:
+                        pass  # Can't edit perms, still try to send
 
                 # Check if pings are disabled for this guild
                 pings_disabled = await db.get_global_pings_disabled(str(guild.id))
