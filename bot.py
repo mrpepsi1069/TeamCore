@@ -149,6 +149,16 @@ async def _http_handler(request: web.Request) -> web.Response:
         return web.json_response(data, headers=CORS_HEADERS)
     if path == "/health":
         return web.json_response({"status": "healthy" if bot.user else "starting"}, headers=CORS_HEADERS)
+    if path == "/api/guilds":
+        guilds = []
+        for g in sorted(bot.guilds, key=lambda x: x.member_count or 0, reverse=True):
+            guilds.append({
+                "id": str(g.id),
+                "name": g.name,
+                "icon": str(g.icon.url) if g.icon else None,
+                "members": g.member_count,
+            })
+        return web.json_response(guilds, headers=CORS_HEADERS)
     return web.Response(status=404, text="Not found", headers=CORS_HEADERS)
 
 
