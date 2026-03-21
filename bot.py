@@ -128,9 +128,17 @@ async def load_cogs():
 # Health Check HTTP Server (for uptime monitoring)
 # ──────────────────────────────────────────────
 
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
 async def _http_handler(request: web.Request) -> web.Response:
+    if request.method == "OPTIONS":
+        return web.Response(headers=CORS_HEADERS)
     path = request.path
-    if path in ("/", "/api/stats"):
+    if path in ("/", "/v1", "/api/stats"):
         data = {
             "status": "online",
             "bot": str(bot.user) if bot.user else "starting",
@@ -138,10 +146,10 @@ async def _http_handler(request: web.Request) -> web.Response:
             "users": sum(g.member_count for g in bot.guilds),
             "uptime": int(__import__("time").time()),
         }
-        return web.json_response(data)
+        return web.json_response(data, headers=CORS_HEADERS)
     if path == "/health":
-        return web.json_response({"status": "healthy" if bot.user else "starting"})
-    return web.Response(status=404, text="Not found")
+        return web.json_response({"status": "healthy" if bot.user else "starting"}, headers=CORS_HEADERS)
+    return web.Response(status=404, text="Not found", headers=CORS_HEADERS)
 
 
 async def start_http():
