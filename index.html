@@ -1,471 +1,363 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TeamCore - Discord Bot for Sports Teams</title>
-    <meta name="description" content="Manage your sports team Discord server with LockerRoom bot - Schedule games, track availability, manage lineups, and more!">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeamCore — Discord Bot for Sports Teams</title>
+  <meta name="description" content="The ultimate Discord bot for managing sports Teams and gaming communities." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-        :root {
-            --primary: #5865F2;
-            --primary-dark: #4752C4;
-            --secondary: #57F287;
-            --dark: #23272A;
-            --darker: #1E2124;
-            --light: #FFFFFF;
-            --gray: #99AAB5;
-            --gray-dark: #2C2F33;
-        }
+    :root {
+      --black:   #050912;
+      --surface: #080e1f;
+      --card:    #0c1428;
+      --border:  rgba(0,180,255,0.12);
+      --text:    #f0f0f5;
+      --muted:   #6b82a8;
+      --grad: linear-gradient(90deg, #00e5ff, #0091ea, #2962ff);
+      --grad-diag: linear-gradient(135deg, #00e5ff, #0091ea, #2962ff);
+    }
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
-            color: var(--light);
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--black); color: var(--text); overflow-x: hidden; }
 
-        /* Header/Hero Section */
-        .hero {
-            text-align: center;
-            padding: 80px 20px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            position: relative;
-            overflow: hidden;
-        }
+    .rainbow-line { height: 3px; background: var(--grad); width: 100%; }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120"><path fill="%23ffffff" fill-opacity="0.05" d="M0,0 L1200,0 L1200,120 Q600,60 0,120 Z"/></svg>') repeat-x bottom;
-            opacity: 0.1;
-        }
+    /* NAV */
+    nav {
+      position: fixed; top: 3px; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 48px;
+      background: rgba(6,6,8,0.85); backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; letter-spacing: 2px;
+      background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .nav-links { display: flex; gap: 32px; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 500; transition: color 0.2s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      padding: 9px 22px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
+      text-decoration: none; background: var(--grad); color: #000; transition: opacity 0.2s, transform 0.2s;
+    }
+    .nav-cta:hover { opacity: 0.88; transform: translateY(-1px); }
 
-        .hero-content {
-            position: relative;
-            z-index: 1;
-        }
+    /* HERO */
+    .hero {
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center; padding: 120px 24px 80px; position: relative; overflow: hidden;
+    }
+    .hero-glow {
+      position: absolute; width: 700px; height: 700px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(0,229,255,0.15) 0%, rgba(0,145,234,0.08) 50%, transparent 70%);
+      pointer-events: none; animation: pulse 6s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.1);opacity:0.7} }
 
-        .hero h1 {
-            font-size: 3.5rem;
-            margin-bottom: 20px;
-            animation: fadeInUp 0.8s ease;
-        }
+    .hero-eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 16px; border-radius: 999px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04); font-size: 0.78rem; font-weight: 500;
+      letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted);
+      margin-bottom: 28px; animation: fadeUp 0.7s ease both;
+    }
+    .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #00e5ff; box-shadow: 0 0 8px #00e5ff;
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-        .hero p {
-            font-size: 1.3rem;
-            margin-bottom: 40px;
-            opacity: 0.9;
-            animation: fadeInUp 0.8s ease 0.2s backwards;
-        }
+    .hero h1 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(4rem, 10vw, 8.5rem);
+      line-height: 0.95; letter-spacing: 4px; margin-bottom: 24px;
+      animation: fadeUp 0.7s ease 0.1s both;
+    }
+    .hero h1 span {
+      background: var(--grad); -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hero p {
+      font-size: clamp(1rem, 2vw, 1.2rem); color: var(--muted);
+      max-width: 520px; line-height: 1.7; margin-bottom: 44px;
+      font-weight: 300; animation: fadeUp 0.7s ease 0.2s both;
+    }
+    .hero-btns { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; animation: fadeUp 0.7s ease 0.3s both; }
 
-        .btn-group {
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            flex-wrap: wrap;
-            animation: fadeInUp 0.8s ease 0.4s backwards;
-        }
+    .btn-main {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 14px 32px; border-radius: 8px; font-size: 0.95rem; font-weight: 600;
+      text-decoration: none; background: var(--grad); color: #000;
+      transition: opacity 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+    .btn-main:hover { opacity: 0.9; transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,145,234,0.4); }
 
-        .btn {
-            padding: 15px 35px;
-            font-size: 1.1rem;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            transition: all 0.3s ease;
-            font-weight: 600;
-        }
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 14px 32px; border-radius: 8px; font-size: 0.95rem; font-weight: 600;
+      text-decoration: none; color: var(--text); border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03); transition: border-color 0.2s, background 0.2s, transform 0.2s;
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.07); transform: translateY(-2px); }
 
-        .btn-primary {
-            background: var(--light);
-            color: var(--primary);
-        }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
 
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(255, 255, 255, 0.3);
-        }
+    /* STATS */
+    .stats-strip {
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      background: var(--surface); display: grid; grid-template-columns: repeat(3,1fr);
+    }
+    .stat-item { padding: 40px 24px; text-align: center; border-right: 1px solid var(--border); }
+    .stat-item:last-child { border-right: none; }
+    .stat-num {
+      font-family: 'Bebas Neue', sans-serif; font-size: 3.5rem; letter-spacing: 2px;
+      background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; line-height: 1; margin-bottom: 6px;
+    }
+    .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
 
-        .btn-secondary {
-            background: transparent;
-            color: var(--light);
-            border: 2px solid var(--light);
-        }
+    /* SECTION */
+    .section { padding: 100px 48px; max-width: 1200px; margin: 0 auto; }
+    .section-tag { display: inline-block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 3px; color: var(--muted); margin-bottom: 16px; }
+    .section-tag::before { content: '//'; margin-right: 8px; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .section-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(2.5rem,5vw,4rem); letter-spacing: 2px; line-height: 1; margin-bottom: 16px; }
+    .section-sub { color: var(--muted); font-size: 1rem; font-weight: 300; max-width: 480px; line-height: 1.7; margin-bottom: 56px; }
 
-        .btn-secondary:hover {
-            background: var(--light);
-            color: var(--primary);
-            transform: translateY(-2px);
-        }
+    /* FEATURES */
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap: 2px; background: var(--border); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+    .feature-card { background: var(--card); padding: 36px 32px; transition: background 0.2s; position: relative; overflow: hidden; }
+    .feature-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background: var(--grad); opacity:0; transition: opacity 0.3s; }
+    .feature-card:hover { background: #0f1a35; }
+    .feature-card:hover::before { opacity: 1; }
+    .feat-icon { font-size: 2rem; margin-bottom: 18px; display: block; }
+    .feat-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 10px; }
+    .feat-desc { font-size: 0.9rem; color: var(--muted); line-height: 1.7; font-weight: 300; }
 
-        /* Statistics Section */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 30px;
-            padding: 60px 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+    /* SERVERS */
+    .servers-section { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .no-data { text-align: center; color: var(--muted); padding: 48px; font-size: 1rem; }
 
-        .stat-card {
-            background: var(--gray-dark);
-            padding: 30px;
-            border-radius: 12px;
-            text-align: center;
-            transition: all 0.3s ease;
-            border: 2px solid transparent;
-        }
+    /* COMMANDS */
+    .cmd-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 16px; }
+    .cmd-group { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .cmd-group-header { padding: 14px 20px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; background: var(--grad); color: #000; }
+    .cmd-list { padding: 8px 0; }
+    .cmd-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; font-size: 0.88rem; color: var(--muted); transition: background 0.15s, color 0.15s; }
+    .cmd-item:hover { background: rgba(255,255,255,0.03); color: var(--text); }
+    .cmd-name { color: var(--text); font-weight: 500; font-size: 0.85rem; white-space: nowrap; }
+    .cmd-sep { color: var(--border); }
 
-        .stat-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--primary);
-            box-shadow: 0 10px 30px rgba(88, 101, 242, 0.3);
-        }
+    /* CTA */
+    .cta-banner { margin: 0 48px 80px; border-radius: 20px; padding: 70px 48px; text-align: center; background: var(--card); border: 1px solid var(--border); position: relative; overflow: hidden; }
+    .cta-banner::before { content:''; position:absolute; inset:0; background: var(--grad-diag); opacity:0.05; }
+    .cta-banner h2 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(2.5rem,5vw,4rem); letter-spacing: 3px; margin-bottom: 16px; position: relative; }
+    .cta-banner p { color: var(--muted); font-size: 1rem; font-weight: 300; margin-bottom: 36px; position: relative; }
+    .cta-banner .btn-main { position: relative; }
 
-        .stat-icon {
-            font-size: 3rem;
-            margin-bottom: 15px;
-        }
+    /* FOOTER */
+    footer { border-top: 1px solid var(--border); padding: 40px 48px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+    .footer-logo { font-family: 'Bebas Neue', sans-serif; font-size: 1.4rem; letter-spacing: 2px; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .footer-text { font-size: 0.82rem; color: var(--muted); }
 
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: bold;
-            color: var(--secondary);
-            margin-bottom: 10px;
-        }
-
-        .stat-label {
-            font-size: 1.1rem;
-            color: var(--gray);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .loading {
-            color: var(--gray);
-            font-style: italic;
-        }
-
-        /* Servers Section */
-        .section {
-            padding: 60px 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .section-title {
-            font-size: 2.5rem;
-            margin-bottom: 40px;
-            text-align: center;
-            color: var(--light);
-        }
-
-        .servers-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 20px;
-        }
-
-        .server-card {
-            background: var(--gray-dark);
-            padding: 20px;
-            border-radius: 12px;
-            border-left: 4px solid var(--primary);
-            transition: all 0.3s ease;
-        }
-
-        .server-card:hover {
-            transform: translateX(5px);
-            box-shadow: 0 5px 20px rgba(88, 101, 242, 0.2);
-        }
-
-        .server-name {
-            font-size: 1.3rem;
-            font-weight: bold;
-            margin-bottom: 10px;
-            color: var(--light);
-        }
-
-        .server-info {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            color: var(--gray);
-            margin-bottom: 5px;
-        }
-
-        .server-info span {
-            font-size: 0.9rem;
-        }
-
-        /* Features Section */
-        .features {
-            background: var(--gray-dark);
-            padding: 60px 20px;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 30px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .feature-card {
-            background: var(--dark);
-            padding: 30px;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-        }
-
-        .feature-icon {
-            font-size: 3rem;
-            margin-bottom: 15px;
-        }
-
-        .feature-title {
-            font-size: 1.5rem;
-            margin-bottom: 10px;
-            color: var(--light);
-        }
-
-        .feature-description {
-            color: var(--gray);
-        }
-
-        /* Footer */
-        .footer {
-            text-align: center;
-            padding: 40px 20px;
-            background: var(--darker);
-            color: var(--gray);
-        }
-
-        /* Animations */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 2.5rem;
-            }
-
-            .hero p {
-                font-size: 1.1rem;
-            }
-
-            .btn-group {
-                flex-direction: column;
-            }
-
-            .stats {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        /* Error/Loading States */
-        .error-message {
-            background: #ED4245;
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            margin: 20px;
-        }
-
-        .no-data {
-            text-align: center;
-            color: var(--gray);
-            padding: 40px;
-            font-size: 1.2rem;
-        }
-    </style>
+    @media(max-width:768px){
+      nav{padding:16px 20px}
+      .nav-links{display:none}
+      .section{padding:70px 20px}
+      .stats-strip{grid-template-columns:1fr}
+      .stat-item{border-right:none;border-bottom:1px solid var(--border)}
+      .stat-item:last-child{border-bottom:none}
+      .cta-banner{margin:0 20px 60px;padding:48px 24px}
+      footer{padding:32px 20px;flex-direction:column;text-align:center}
+    }
+  </style>
 </head>
 <body>
-    <!-- Hero Section -->
-    <section class="hero">
-        <div class="hero-content">
-            <h1>🏆 TeamCore</h1>
-            <p>The ultimate Discord bot for managing sports teams and gaming communities</p>
-            <div class="btn-group">
-                <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands" id="invite-btn" class="btn btn-primary">
-                    <span>➕</span> Add to Discord
-                </a>
-                <a href="https://discord.gg/BkFJuu7DbN" id="support-btn" class="btn btn-secondary">
-                    <span>💬</span> Join Support Server
-                </a>
-            </div>
-        </div>
-    </section>
 
-    <!-- Statistics Section -->
-    <section class="stats">
-        <div class="stat-card">
-            <div class="stat-icon">🏰</div>
-            <div class="stat-number" id="guild-count">
-                <span class="loading">Loading...</span>
-            </div>
-            <div class="stat-label">Servers</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">👥</div>
-            <div class="stat-number" id="user-count">
-                <span class="loading">Loading...</span>
-            </div>
-            <div class="stat-label">Users</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">⚡</div>
-            <div class="stat-number" id="uptime">
-                <span class="loading">Loading...</span>
-            </div>
-            <div class="stat-label">Status</div>
-        </div>
-    </section>
+<div class="rainbow-line"></div>
 
-    <!-- Servers Section -->
-    <section class="section">
-        <h2 class="section-title">🌐 Servers Using TeamCore</h2>
-        <div id="servers-container">
-            <div class="loading" style="text-align: center; padding: 40px;">Loading servers...</div>
-        </div>
-    </section>
+<nav>
+  <div class="nav-logo">TeamCore</div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#commands">Commands</a>
+    <a href="https://discord.gg/BkFJuu7DbN">Support</a>
+  </div>
+  <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands" class="nav-cta">Add to Discord</a>
+</nav>
 
-    <!-- Features Section -->
-    <section class="features">
-        <div class="section">
-            <h2 class="section-title">✨ Features</h2>
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">⏰</div>
-                    <div class="feature-title">Game Scheduling</div>
-                    <div class="feature-description">Create game time polls with multiple time options. Players can select their availability with interactive buttons.</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📋</div>
-                    <div class="feature-title">Lineup Management</div>
-                    <div class="feature-description">Organize team lineups and track player availability for matches and scrimmages.</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🏅</div>
-                    <div class="feature-title">Award System</div>
-                    <div class="feature-description">Recognize players with custom awards and track achievements throughout the season.</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🔔</div>
-                    <div class="feature-title">Team Notifications</div>
-                    <div class="feature-description">DM all team members at once with important announcements and updates.</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">👑</div>
-                    <div class="feature-title">League Support</div>
-                    <div class="feature-description">Manage multiple leagues within the same server with custom roles and permissions.</div>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🛡️</div>
-                    <div class="feature-title">Moderation Tools</div>
-                    <div class="feature-description">Powerful moderation commands including timeout, kick, and ban with proper role hierarchy.</div>
-                </div>
-            </div>
-        </div>
-    </section>
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-eyebrow"><span class="dot"></span><span id="status-text">Checking status...</span></div>
+  <h1>THE BOT YOUR<br><span>TEAM NEEDS</span></h1>
+  <p>Schedule games, manage lineups, track contracts, run awards — everything your sports community needs in one Discord bot.</p>
+  <div class="hero-btns">
+    <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands" class="btn-main">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+      Add to Discord
+    </a>
+    <a href="https://discord.gg/BkFJuu7DbN" class="btn-ghost">Join Support Server</a>
+  </div>
+</section>
 
-    <!-- Footer -->
-    <footer class="footer">
-        <p>© 2025 LockerRoom Bot. Made for sports teams and gaming communities.</p>
-        <p style="margin-top: 10px; font-size: 0.9rem;">Powered by discord.py</p>
-    </footer>
+<div class="stats-strip">
+  <div class="stat-item"><div class="stat-num" id="guild-count">—</div><div class="stat-label">Servers</div></div>
+  <div class="stat-item"><div class="stat-num" id="user-count">—</div><div class="stat-label">Users</div></div>
+  <div class="stat-item"><div class="stat-num" id="uptime-val">—</div><div class="stat-label">Status</div></div>
+</div>
 
-    <script>
-        // Update this to your hosted bot URL once deployed (e.g. Render or Railway)
-        // Leave as empty string to show offline state while running locally
-        const BOT_API_URL = 'https://endless-evangeline-ghostie-bots-7370516d.koyeb.app/v1';
+<section class="section" id="features">
+  <span class="section-tag">What it does</span>
+  <h2 class="section-title">BUILT FOR<br>TEAMS</h2>
+  <p class="section-sub">Everything your team Discord needs — from scheduling to stats — without the bloat.</p>
+  <div class="features-grid">
+    <div class="feature-card"><span class="feat-icon">⏰</span><div class="feat-title">Game Scheduling</div><div class="feat-desc">Create game time polls with multiple time slots. Players click buttons to mark availability — results update in real time.</div></div>
+    <div class="feature-card"><span class="feat-icon">📋</span><div class="feat-title">Lineup Management</div><div class="feat-desc">Build, edit, and post team lineups. Track positions, add or remove players, and post formatted lineups to any channel.</div></div>
+    <div class="feature-card"><span class="feat-icon">📊</span><div class="feat-title">Depth Charts</div><div class="feat-desc">Maintain full depth charts with promote and demote controls. Keep every position stacked and organized.</div></div>
+    <div class="feature-card"><span class="feat-icon">📜</span><div class="feat-title">Contracts</div><div class="feat-desc">Add and manage player contracts with mark-paid and delete buttons. Post all active contracts in a clean embed.</div></div>
+    <div class="feature-card"><span class="feat-icon">🏅</span><div class="feat-title">Awards & Rings</div><div class="feat-desc">Hand out custom awards and championship rings. Players check their own with a single command.</div></div>
+    <div class="feature-card"><span class="feat-icon">👑</span><div class="feat-title">Team Management</div><div class="feat-desc">Create leagues with signup buttons that auto-assign Discord roles. Players join or leave by clicking.</div></div>
+    <div class="feature-card"><span class="feat-icon">🔔</span><div class="feat-title">Team Broadcasts</div><div class="feat-desc">DM every member of a role at once with a custom message. Keep your whole roster in the loop instantly.</div></div>
+    <div class="feature-card"><span class="feat-icon">🛡️</span><div class="feat-title">Moderation</div><div class="feat-desc">Kick, ban, timeout, mute voice channels. Full hierarchy checks so managers can't moderate above their rank.</div></div>
+    <div class="feature-card"><span class="feat-icon">⚙️</span><div class="feat-title">Server Setup</div><div class="feat-desc">Configure channels and roles for each permission tier. Adapts to your server's existing structure.</div></div>
+  </div>
+</section>
 
-        async function fetchBotStats() {
-            if (!BOT_API_URL) {
-                document.getElementById('guild-count').textContent = '—';
-                document.getElementById('user-count').textContent = '—';
-                document.getElementById('uptime').innerHTML = '<span style="color: #FEE75C;">🟡 Local</span>';
-                document.getElementById('servers-container').innerHTML = `
-                    <div class="no-data">
-                        🚀 Add LockerRoom to your server to get started!
-                    </div>
-                `;
-                return;
-            }
+<section class="servers-section">
+  <div class="section">
+    <span class="section-tag">Community</span>
+    <h2 class="section-title">ACTIVE<br>SERVERS</h2>
+    <p class="section-sub">Communities already running TeamCore.</p>
+    <div id="servers-container"><div class="no-data">Loading...</div></div>
+  </div>
+</section>
 
-            try {
-                const response = await fetch(BOT_API_URL);
-                const data = await response.json();
+<section class="section" id="commands">
+  <span class="section-tag">Full command list</span>
+  <h2 class="section-title">EVERY<br>COMMAND</h2>
+  <p class="section-sub">Organized by permission level so you know exactly who can do what.</p>
+  <div class="cmd-grid">
+    <div class="cmd-group">
+      <div class="cmd-group-header">Public</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/help</span><span class="cmd-sep">—</span>Command menu</div>
+        <div class="cmd-item"><span class="cmd-name">/invite</span><span class="cmd-sep">—</span>Get bot invite</div>
+        <div class="cmd-item"><span class="cmd-name">/awardcheck</span><span class="cmd-sep">—</span>View your awards</div>
+        <div class="cmd-item"><span class="cmd-name">/suggest</span><span class="cmd-sep">—</span>Submit suggestion</div>
+        <div class="cmd-item"><span class="cmd-name">/flipcoin</span><span class="cmd-sep">—</span>Flip a coin</div>
+        <div class="cmd-item"><span class="cmd-name">/randomnumber</span><span class="cmd-sep">—</span>Random number</div>
+        <div class="cmd-item"><span class="cmd-name">/bold</span><span class="cmd-sep">—</span>Boldify text</div>
+        <div class="cmd-item"><span class="cmd-name">/fban</span><span class="cmd-sep">—</span>Fake ban</div>
+        <div class="cmd-item"><span class="cmd-name">/fkick</span><span class="cmd-sep">—</span>Fake kick</div>
+        <div class="cmd-item"><span class="cmd-name">/ping</span><span class="cmd-sep">—</span>Check latency</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Staff</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/mutevc</span><span class="cmd-sep">—</span>Mute voice channel</div>
+        <div class="cmd-item"><span class="cmd-name">/unmutevc</span><span class="cmd-sep">—</span>Unmute voice channel</div>
+        <div class="cmd-item"><span class="cmd-name">/dmtcmembers</span><span class="cmd-sep">—</span>DM role members</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Manager</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/gametime</span><span class="cmd-sep">—</span>Game time poll</div>
+        <div class="cmd-item"><span class="cmd-name">/times</span><span class="cmd-sep">—</span>Multiple time options</div>
+        <div class="cmd-item"><span class="cmd-name">/league-add</span><span class="cmd-sep">—</span>Post recruitment</div>
+        <div class="cmd-item"><span class="cmd-name">/league-delete</span><span class="cmd-sep">—</span>Remove a league</div>
+        <div class="cmd-item"><span class="cmd-name">/ring-add</span><span class="cmd-sep">—</span>Grant rings</div>
+        <div class="cmd-item"><span class="cmd-name">/award</span><span class="cmd-sep">—</span>Give awards</div>
+        <div class="cmd-item"><span class="cmd-name">/activitycheck</span><span class="cmd-sep">—</span>Set activity check</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Lineups</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/lineup-create</span><span class="cmd-sep">—</span>New lineup</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-view</span><span class="cmd-sep">—</span>View lineup</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-edit</span><span class="cmd-sep">—</span>Edit position</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-add</span><span class="cmd-sep">—</span>Add player</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-remove</span><span class="cmd-sep">—</span>Remove player</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-post</span><span class="cmd-sep">—</span>Post to channel</div>
+        <div class="cmd-item"><span class="cmd-name">/lineup-delete</span><span class="cmd-sep">—</span>Delete lineup</div>
+        <div class="cmd-item"><span class="cmd-name">/lineups</span><span class="cmd-sep">—</span>View all lineups</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Depth Charts</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/depthchart-create</span><span class="cmd-sep">—</span>New chart</div>
+        <div class="cmd-item"><span class="cmd-name">/depthchart-add</span><span class="cmd-sep">—</span>Add player</div>
+        <div class="cmd-item"><span class="cmd-name">/depthchart-remove</span><span class="cmd-sep">—</span>Remove player</div>
+        <div class="cmd-item"><span class="cmd-name">/depthchart-promote</span><span class="cmd-sep">—</span>Promote player</div>
+        <div class="cmd-item"><span class="cmd-name">/depthchart-demote</span><span class="cmd-sep">—</span>Demote player</div>
+        <div class="cmd-item"><span class="cmd-name">/depthchart-delete</span><span class="cmd-sep">—</span>Delete chart</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Contracts</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/contract-add</span><span class="cmd-sep">—</span>Add contract</div>
+        <div class="cmd-item"><span class="cmd-name">/contract-remove</span><span class="cmd-sep">—</span>Remove contract</div>
+        <div class="cmd-item"><span class="cmd-name">/contract-post</span><span class="cmd-sep">—</span>Post all contracts</div>
+      </div>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-group-header">Admin</div>
+      <div class="cmd-list">
+        <div class="cmd-item"><span class="cmd-name">/setup</span><span class="cmd-sep">—</span>Configure bot</div>
+        <div class="cmd-item"><span class="cmd-name">/role</span><span class="cmd-sep">—</span>Assign role</div>
+        <div class="cmd-item"><span class="cmd-name">/unrole</span><span class="cmd-sep">—</span>Remove role</div>
+        <div class="cmd-item"><span class="cmd-name">/adminkick</span><span class="cmd-sep">—</span>Kick user</div>
+        <div class="cmd-item"><span class="cmd-name">/adminban</span><span class="cmd-sep">—</span>Ban user</div>
+      </div>
+    </div>
+  </div>
+</section>
 
-                document.getElementById('guild-count').textContent = data.guilds ?? '0';
-                document.getElementById('user-count').textContent = (data.users ?? 0).toLocaleString();
+<div class="cta-banner">
+  <h2>READY TO RUN<br>YOUR TEAM?</h2>
+  <p>Add TeamCore to your server in seconds. Free to use.</p>
+  <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=8&scope=bot%20applications.commands" class="btn-main">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+    Add to Discord — It's Free
+  </a>
+</div>
 
-                const statusEl = document.getElementById('uptime');
-                if (data.status === 'online' && data.bot !== 'Starting') {
-                    statusEl.innerHTML = '<span style="color: #57F287;">🟢 Online</span>';
-                } else {
-                    statusEl.innerHTML = '<span style="color: #ED4245;">🔴 Starting...</span>';
-                }
+<footer>
+  <div class="footer-logo">TeamCore</div>
+  <div class="footer-text">© 2025 TeamCore Bot. Built for Teams.</div>
+  <div class="footer-text">Powered by discord.py</div>
+</footer>
 
-                await fetchServerList(data.guilds);
-
-            } catch (error) {
-                document.getElementById('guild-count').innerHTML = '<span style="color: #ED4245;">—</span>';
-                document.getElementById('user-count').innerHTML = '<span style="color: #ED4245;">—</span>';
-                document.getElementById('uptime').innerHTML = '<span style="color: #ED4245;">🔴 Offline</span>';
-                document.getElementById('servers-container').innerHTML = `
-                    <div class="error-message">
-                        ❌ Unable to reach the bot API. The bot may be offline.
-                    </div>
-                `;
-            }
-        }
-
-        function fetchServerList(guildCount) {
-            const container = document.getElementById('servers-container');
-            container.innerHTML = `
-                <div class="no-data">
-                    🏰 Currently serving <strong style="color: var(--secondary);">${guildCount}</strong> amazing communities!
-                    <br><br>
-                    <small style="color: var(--gray);">Add LockerRoom to your server to join them!</small>
-                </div>
-            `;
-        }
-
-        fetchBotStats();
-        setInterval(fetchBotStats, 30000);
-    </script>
+<script>
+  const API = 'https://endless-evangeline-ghostie-bots-7370516d.koyeb.app/v1';
+  async function loadStats() {
+    try {
+      const data = await fetch(API).then(r => r.json());
+      document.getElementById('guild-count').textContent = data.guilds ?? '—';
+      document.getElementById('user-count').textContent  = (data.users ?? 0).toLocaleString();
+      document.getElementById('uptime-val').textContent  = data.status === 'online' ? '🟢 Online' : '🔴 Offline';
+      document.getElementById('status-text').textContent = data.status === 'online' ? `${data.guilds} servers online` : 'Bot offline';
+      document.getElementById('servers-container').innerHTML =
+        `<div class="no-data">🏰 Powering <strong style="color:#ffd700">${data.guilds}</strong> communities — add yours today!</div>`;
+    } catch {
+      document.getElementById('uptime-val').textContent  = '🔴 Offline';
+      document.getElementById('status-text').textContent = 'Unable to reach API';
+      document.getElementById('servers-container').innerHTML = '<div class="no-data">Could not load server data.</div>';
+    }
+  }
+  loadStats();
+  setInterval(loadStats, 30000);
+</script>
 </body>
 </html>
