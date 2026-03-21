@@ -51,6 +51,15 @@ class Logging(commands.Cog):
         self.bot = bot
 
     # ──────────────────────────────────────────────
+    # Create channels on startup
+    # ──────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for name in [CHANNEL_GUILD_JOINS, CHANNEL_GUILD_LEAVES, CHANNEL_BOT_ERRORS]:
+            await _get_log_channel(self.bot, name)
+
+    # ──────────────────────────────────────────────
     # Guild Join
     # ──────────────────────────────────────────────
 
