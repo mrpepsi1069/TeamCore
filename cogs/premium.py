@@ -15,7 +15,7 @@ class Premium(commands.Cog):
     @app_commands.command(name="premium", description="View premium plans and pricing")
     async def premium(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="💎 LockerRoom Bot Premium",
+            title="💎 TeamCore Custom Premium",
             description="Unlock exclusive features for your team!",
             color=0xFFD700,
         )
@@ -24,8 +24,8 @@ class Premium(commands.Cog):
             value=(
                 "**Monthly** — $3/month\n"
                 "**3 Months** — $6 (Save $3!)\n"
-                "**Lifetime** — $10 (Best Value 🔥)\n"
-                "**Custom Commands** — $1-5"
+                "**Lifetime** — $12 (Best Value 🔥)\n"
+                "**Custom Commands** — $1-3"
             ),
             inline=False,
         )
@@ -39,7 +39,8 @@ class Premium(commands.Cog):
                 "• Priority support\n"
                 "• Early access to new features\n"
                 "• Advanced data backup\n"
-                "• Detailed usage statistics"
+                "• Detailed usage statistics\n"
+                "• More future features in the works"
             ),
             inline=False,
         )
