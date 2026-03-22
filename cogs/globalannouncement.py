@@ -42,18 +42,18 @@ class GlobalAnnouncement(commands.Cog):
                 # Find or create the TeamCore Global channel
                 channel = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
 
-                # Build overwrites: hidden from everyone, visible to admin roles + bot + owner
+                # Build overwrites: private channel, admin roles only
                 correct_overwrites = {
-                    guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                    guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True),
+                    guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                    guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True),
                 }
                 # Grant access to every role that has administrator permission
                 for role in guild.roles:
                     if role.permissions.administrator:
-                        correct_overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
+                        correct_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
                 # Always grant the owner direct access too
                 if guild.owner:
-                    correct_overwrites[guild.owner] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
+                    correct_overwrites[guild.owner] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
 
                 if channel is None:
                     # Try to create the channel, fall back to system/any channel
