@@ -8,15 +8,26 @@ from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_coach_perms
 
-COOLDOWN_SECONDS = 300  # 5 minutes
+COOLDOWN_SECONDS = 300
 _cooldowns: dict[int, float] = {}
+
+
+def channel_icon(channel: discord.abc.GuildChannel) -> str:
+    if isinstance(channel, discord.VoiceChannel):
+        return "🔊"
+    if isinstance(channel, discord.StageChannel):
+        return "🎙️"
+    if isinstance(channel, discord.ForumChannel):
+        return "📋"
+    return "#"
 
 
 class RoleSelectView(discord.ui.View):
     def __init__(self, interaction: discord.Interaction, message: str):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)
         self.original_interaction = interaction
         self.message = message
+        self.selected_roles: list[discord.Role] = []
 
     @discord.ui.select(
         cls=discord.ui.RoleSelect,
@@ -25,20 +36,36 @@ class RoleSelectView(discord.ui.View):
         max_values=10,
     )
     async def role_select(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        await interaction.response.defer(ephemeral=True)
-        self.stop()
+        self.selected_roles = [r for r in select.values if not r.is_default()]
+        role_names = ", ".join(f"**{r.name}**" for r in self.selected_roles) or "None"
+        await interaction.response.edit_message(
+            content=f"📋 **Select the roles you want to DM:**\n✅ Selected: {role_names}\n\nClick **Send** when ready.",
+            view=self
+        )
 
-        roles = [r for r in select.values if not r.is_default()]
-        if not roles:
-            return await interaction.followup.send(
-                embed=error_embed("No Roles", "Please select at least one valid role."),
+    @discord.ui.button(label="Send", style=discord.ButtonStyle.success, emoji="📨")
+    async def send_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_roles:
+            return await interaction.response.send_message(
+                embed=error_embed("No Roles Selected", "Please select at least one role first."),
                 ephemeral=True
             )
 
-        # Collect unique non-bot members across all selected roles
+        await interaction.response.defer(ephemeral=True)
+        self.stop()
+
+        # Disable the view
+        for item in self.children:
+            item.disabled = True
+        await self.original_interaction.edit_original_response(
+            content="📨 Sending DMs...",
+            view=self
+        )
+
+        # Collect unique non-bot members
         seen = set()
         members = []
-        for role in roles:
+        for role in self.selected_roles:
             for m in role.members:
                 if not m.bot and m.id not in seen:
                     seen.add(m.id)
@@ -52,6 +79,7 @@ class RoleSelectView(discord.ui.View):
 
         channel = self.original_interaction.channel
         channel_link = f"https://discord.com/channels/{interaction.guild_id}/{channel.id}"
+        icon = channel_icon(channel)
         guild = interaction.guild
 
         _cooldowns[interaction.guild_id] = time.time()
@@ -71,7 +99,7 @@ class RoleSelectView(discord.ui.View):
                 embed.add_field(name="👤 Sent By", value=self.original_interaction.user.mention, inline=False)
                 embed.add_field(
                     name="🏠 Server",
-                    value=f"[{guild.name} • #{channel.name}]({channel_link})",
+                    value=channel_link,
                     inline=False
                 )
                 await m.send(embed=embed)
@@ -80,11 +108,18 @@ class RoleSelectView(discord.ui.View):
             except Exception:
                 fail += 1
 
-        role_mentions = " ".join(r.mention for r in roles)
+        role_mentions = " ".join(r.mention for r in self.selected_roles)
         text = f"Successfully sent DM to **{ok}** member(s) across {role_mentions}"
         if fail:
             text += f"\n\n⚠️ Failed to DM **{fail}** member(s) (DMs disabled)"
+
+        await self.original_interaction.edit_original_response(content="✅ Done!", view=None)
         await interaction.followup.send(embed=success_embed("📨 DMs Sent", text), ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="❌ Cancelled.", view=None)
 
     async def on_timeout(self):
         for item in self.children:
@@ -128,7 +163,7 @@ class DmMembers(commands.Cog):
 
         view = RoleSelectView(interaction, message)
         await interaction.response.send_message(
-            content="📋 **Select the roles you want to DM:**",
+            content="📋 **Select the roles you want to DM:**\n\nClick **Send** when ready.",
             view=view,
             ephemeral=True
         )
