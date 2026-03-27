@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 
-DISCORD_LINK = "https://discord.gg/BkFJuu7DbN"
+DISCORD_LINK = "https://discord.gg/3cWdPsCPC8"
 
 
 class Premium(commands.Cog):
@@ -22,8 +22,7 @@ class Premium(commands.Cog):
         embed.add_field(
             name="💰 Pricing Plans",
             value=(
-                "**Monthly** — $3/month\n"
-                "**3 Months** — $6 (Save $3!)\n"
+                "**Monthly** — $4/month\n"
                 "**Lifetime** — $12 (Best Value 🔥)\n"
                 "**Custom Commands** — $1-3"
             ),
