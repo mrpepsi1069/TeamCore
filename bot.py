@@ -110,7 +110,7 @@ COGS = [
     "cogs.dmmembers", "cogs.premium", "cogs.awardcheck", "cogs.award",
     "cogs.ringadd", "cogs.lineup", "cogs.depthchart", "cogs.league",
     "cogs.gametime", "cogs.times", "cogs.contract",
-    "cogs.globalannouncement", "cogs.templateuse",
+    "cogs.globalannouncement", "cogs.templateuse", "cogs.join",
     "cogs.logging",
 ]
 
