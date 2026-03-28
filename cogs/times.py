@@ -11,7 +11,6 @@ from utils.permissions import has_manager_perms
 class Times(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Register persistent views
         bot.add_view(TimesView([], ""))
 
     @app_commands.command(name="times", description="Create a poll for multiple time options")
@@ -33,24 +32,70 @@ class Times(commands.Cog):
         time6: str = None,
     ):
         if not await has_manager_perms(interaction):
-            return await interaction.response.send_message(embed=error_embed("Permission Denied", "You need Manager role or higher."), ephemeral=True)
+            return await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "You need Manager role or higher."),
+                ephemeral=True
+            )
 
         await interaction.response.defer(ephemeral=True)
 
         time_options = [t for t in [time1, time2, time3, time4, time5, time6] if t]
+
         desc = f"**League:** {league}\n\nSelect which times work for you:\n\n"
         for t in time_options:
             desc += f"🕐 **{t}**\n• None yet\n\n"
 
-        embed = discord.Embed(title="⏰ Available Times Poll", description=desc.strip(), color=0x5865F2)
+        embed = discord.Embed(
+            title="⏰ Available Times Poll",
+            description=desc.strip(),
+            color=0x5865F2,
+        )
         embed.set_footer(text="Click the buttons to select your available times")
 
         view = TimesView(time_options, league)
         try:
-            await interaction.channel.send(content=role.mention, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(roles=True))
-            await interaction.followup.send(embed=success_embed("Times Poll Created", f"Created poll for **{league}** with {len(time_options)} options!"), ephemeral=True)
+            await interaction.channel.send(
+                content=role.mention,
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
+            await interaction.followup.send(
+                embed=success_embed("Times Poll Created", f"Created poll for **{league}** with {len(time_options)} options!"),
+                ephemeral=True,
+            )
         except discord.Forbidden:
-            await interaction.followup.send(embed=error_embed("Missing Permissions", "I need Send Messages, Embed Links, and Mention Roles permissions."), ephemeral=True)
+            await interaction.followup.send(
+                embed=error_embed("Missing Permissions", "I need Send Messages, Embed Links, and Mention Roles permissions."),
+                ephemeral=True,
+            )
+
+
+def _parse_sections(desc: str) -> tuple[str, list[tuple[str, list[str]]]]:
+    """Parse embed description into header + list of (time, [user_ids])."""
+    # Split off the header lines before the first time slot
+    parts = desc.split("🕐 **")
+    header = parts[0].strip()
+    sections = []
+    for part in parts[1:]:
+        # part looks like: "9:00**\n• <@123> • <@456>\n\n" or "9:00**\n• None yet\n\n"
+        if "**" not in part:
+            continue
+        time_str, rest = part.split("**", 1)
+        user_ids = re.findall(r"<@(\d+)>", rest)
+        sections.append((time_str, user_ids))
+    return header, sections
+
+
+def _build_desc(header: str, sections: list[tuple[str, list[str]]]) -> str:
+    desc = header + "\n\nSelect which times work for you:\n\n"
+    for t, users in sections:
+        desc += f"🕐 **{t}**\n"
+        if users:
+            desc += "• " + " • ".join(f"<@{uid}>" for uid in users) + "\n\n"
+        else:
+            desc += "• None yet\n\n"
+    return desc.strip()
 
 
 class TimesView(discord.ui.View):
@@ -71,44 +116,24 @@ class TimesView(discord.ui.View):
     def _make_callback(self, index: int):
         async def callback(interaction: discord.Interaction):
             await interaction.response.defer(ephemeral=True)
+
             embed = interaction.message.embeds[0]
-            desc = embed.description
             uid = str(interaction.user.id)
 
-            lines = desc.split("\n")
-            sections = []
-            current_time = current_users = None
-            for line in lines:
-                if line.startswith("🕐 **"):
-                    if current_time is not None:
-                        sections.append((current_time, current_users))
-                    current_time = line[5:].rstrip("**")
-                    current_users = []
-                elif line.startswith("• ") and current_time is not None:
-                    ids = re.findall(r"<@(\d+)>", line)
-                    current_users = ids
-            if current_time is not None:
-                sections.append((current_time, current_users))
+            header, sections = _parse_sections(embed.description)
 
-            if index < len(sections):
-                t, users = sections[index]
-                if uid in users:
-                    users.remove(uid)
-                else:
-                    users.append(uid)
-                sections[index] = (t, users)
+            if index >= len(sections):
+                return await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
 
-            league_line = lines[0]
-            new_desc = league_line + "\n\nSelect which times work for you:\n\n"
-            for t, users in sections:
-                new_desc += f"🕐 **{t}**\n"
-                if users:
-                    new_desc += "• " + " • ".join(f"<@{i}>" for i in users) + "\n\n"
-                else:
-                    new_desc += "• None yet\n\n"
+            t, users = sections[index]
+            if uid in users:
+                users.remove(uid)
+            else:
+                users.append(uid)
+            sections[index] = (t, users)
 
             new_embed = discord.Embed.from_dict(embed.to_dict())
-            new_embed.description = new_desc.strip()
+            new_embed.description = _build_desc(header, sections)
             await interaction.message.edit(embed=new_embed)
 
             selected = [t for t, users in sections if uid in users]
@@ -117,6 +142,7 @@ class TimesView(discord.ui.View):
             else:
                 msg = "ℹ️ You haven't selected any times yet."
             await interaction.followup.send(msg, ephemeral=True)
+
         return callback
 
 
