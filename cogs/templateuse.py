@@ -1,27 +1,35 @@
-"""cogs/templateuse.py — Clone a server layout from a source server"""
+"""cogs/templateuse.py — Apply a server template by cloning from a template guild"""
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-SOURCE_SERVER_ID = 1487243792917463072  # Template source server
+# ── Add more templates here as needed ───────────────────────────
+TEMPLATES = {
+    "TeamCore Default": {
+        "guild_id": 1487243792917463072,
+        "description": "Standard TeamCore layout with channels, roles & permissions",
+        "emoji": "🏈",
+    },
+}
 
-# ── Confirmation view ───────────────────────────────────────────
+
+# ── Confirmation view ────────────────────────────────────────────
 class ConfirmView(discord.ui.View):
-    def __init__(self, target_guild: discord.Guild, source_guild: discord.Guild):
+    def __init__(self, target_guild: discord.Guild, template_guild: discord.Guild):
         super().__init__(timeout=30)
         self.target_guild = target_guild
-        self.source_guild = source_guild
+        self.template_guild = template_guild
 
-    @discord.ui.button(label="Yes, clone server", style=discord.ButtonStyle.danger, emoji="⚠️")
+    @discord.ui.button(label="Yes, apply template", style=discord.ButtonStyle.danger, emoji="⚠️")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(
-            content="⏳ Cloning server layout... this may take a while.",
+            content="⏳ Applying template... this may take a minute.",
             view=self
         )
-        await clone_server_layout(self.source_guild, self.target_guild, interaction)
+        await apply_template(self.template_guild, self.target_guild, interaction)
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️")
@@ -29,147 +37,201 @@ class ConfirmView(discord.ui.View):
         self.stop()
         await interaction.response.edit_message(content="❌ Cancelled.", view=None)
 
-# ── Clone logic ─────────────────────────────────────────────────
-async def clone_server_layout(source: discord.Guild, target: discord.Guild, interaction: discord.Interaction):
-    try:
-        # ── Delete all channels in target ──
-        for channel in target.channels:
-            try:
-                await channel.delete(reason="Server clone")
-            except Exception as e:
-                print(f"Failed to delete channel {channel.name}: {e}")
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
-        # ── Delete all roles in target except @everyone/managed ──
-        for role in target.roles:
-            if role.is_default() or role.managed:
-                continue
-            try:
-                await role.delete(reason="Server clone")
-            except Exception as e:
-                print(f"Failed to delete role {role.name}: {e}")
 
-        # ── Clone roles ──
-        role_map = {}
-        for role in sorted(source.roles, key=lambda r: r.position):
-            if role.is_default() or role.managed:
-                continue
-            try:
-                new_role = await target.create_role(
-                    name=role.name,
-                    permissions=role.permissions,
-                    color=role.color,
-                    hoist=role.hoist,
-                    mentionable=role.mentionable,
-                    reason="Server clone"
-                )
-                role_map[role.id] = new_role
-            except Exception as e:
-                print(f"Failed to clone role {role.name}: {e}")
+# ── Template select dropdown ─────────────────────────────────────
+class TemplateSelectView(discord.ui.View):
+    def __init__(self, target_guild: discord.Guild, bot: commands.Bot):
+        super().__init__(timeout=60)
+        self.target_guild = target_guild
+        self.bot = bot
 
-        # ── Clone categories first ──
-        category_map = {}
-        for cat in source.categories:
-            try:
-                overwrites = {}
-                for target_role in cat.overwrites:
-                    if isinstance(target_role, discord.Role) and target_role.id in role_map:
-                        overwrites[role_map[target_role.id]] = cat.overwrites[target_role]
-                    elif isinstance(target_role, discord.Role) and target_role.is_default():
-                        overwrites[target.roles[0]] = cat.overwrites[target_role]
-                new_cat = await target.create_category(
-                    name=cat.name,
+        options = [
+            discord.SelectOption(
+                label=name,
+                description=data["description"][:100],
+                emoji=data["emoji"],
+                value=str(data["guild_id"]),
+            )
+            for name, data in TEMPLATES.items()
+        ]
+
+        select = discord.ui.Select(
+            placeholder="Choose a template...",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        select.callback = self.on_select
+        self.add_item(select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        guild_id = int(interaction.data["values"][0])
+        template_guild = self.bot.get_guild(guild_id)
+
+        if not template_guild:
+            return await interaction.response.edit_message(
+                content="❌ Template server not found. Make sure the bot is in the template server.",
+                view=None
+            )
+
+        template_name = next(
+            (name for name, data in TEMPLATES.items() if data["guild_id"] == guild_id),
+            "Unknown"
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"## ⚠️ Are you sure?\n"
+                f"You selected: **{template_name}**\n\n"
+                f"This will **permanently delete ALL channels and roles** in **{self.target_guild.name}** "
+                f"and replace them with the template layout.\n\n"
+                f"**This cannot be undone.**"
+            ),
+            view=ConfirmView(self.target_guild, template_guild)
+        )
+
+
+# ── Core apply logic ─────────────────────────────────────────────
+async def apply_template(
+    template_guild: discord.Guild,
+    target_guild: discord.Guild,
+    interaction: discord.Interaction,
+):
+    # 1. Delete all channels
+    for ch in list(target_guild.channels):
+        try:
+            await ch.delete(reason="Template application")
+        except Exception:
+            pass
+
+    # 2. Delete all non-default, non-managed roles
+    for role in list(target_guild.roles):
+        if role.is_default() or role.managed:
+            continue
+        try:
+            await role.delete(reason="Template application")
+        except Exception:
+            pass
+
+    # 3. Recreate roles (lowest position first)
+    role_map: dict[int, discord.Role] = {}
+    for role in sorted(template_guild.roles, key=lambda r: r.position, reverse=True):
+        if role.is_default() or role.managed:
+            continue
+        try:
+            new_role = await target_guild.create_role(
+                name=role.name,
+                permissions=role.permissions,
+                color=role.color,
+                hoist=role.hoist,
+                mentionable=role.mentionable,
+                reason="Template application",
+            )
+            role_map[role.id] = new_role
+        except Exception:
+            pass
+
+    def build_overwrites(channel) -> dict:
+        overwrites = {}
+        for target, overwrite in channel.overwrites.items():
+            if isinstance(target, discord.Role):
+                if target.is_default():
+                    overwrites[target_guild.default_role] = overwrite
+                elif target.id in role_map:
+                    overwrites[role_map[target.id]] = overwrite
+        return overwrites
+
+    # 4. Recreate categories
+    category_map: dict[int, discord.CategoryChannel] = {}
+    for cat in sorted(template_guild.categories, key=lambda c: c.position):
+        try:
+            new_cat = await target_guild.create_category(
+                name=cat.name,
+                overwrites=build_overwrites(cat),
+                position=cat.position,
+                reason="Template application",
+            )
+            category_map[cat.id] = new_cat
+        except Exception:
+            pass
+
+    # 5. Recreate channels
+    for ch in sorted(template_guild.channels, key=lambda c: c.position):
+        if isinstance(ch, discord.CategoryChannel):
+            continue
+        parent = category_map.get(ch.category.id) if ch.category else None
+        overwrites = build_overwrites(ch)
+        try:
+            if isinstance(ch, discord.TextChannel):
+                await target_guild.create_text_channel(
+                    name=ch.name,
+                    topic=ch.topic or "",
                     overwrites=overwrites,
-                    position=cat.position,
-                    reason="Server clone"
+                    category=parent,
+                    nsfw=ch.nsfw,
+                    slowmode_delay=ch.slowmode_delay,
+                    reason="Template application",
                 )
-                category_map[cat.id] = new_cat
-            except Exception as e:
-                print(f"Failed to clone category {cat.name}: {e}")
-
-        # ── Clone channels ──
-        for ch in source.channels:
-            if isinstance(ch, discord.CategoryChannel):
-                continue
-            parent = category_map.get(ch.category.id) if ch.category else None
-            overwrites = {}
-            for target_role in ch.overwrites:
-                if isinstance(target_role, discord.Role):
-                    if target_role.id in role_map:
-                        overwrites[role_map[target_role.id]] = ch.overwrites[target_role]
-                    elif target_role.is_default():
-                        overwrites[target.roles[0]] = ch.overwrites[target_role]
-            try:
-                if isinstance(ch, discord.TextChannel):
-                    await target.create_text_channel(
-                        name=ch.name,
-                        topic=ch.topic,
-                        overwrites=overwrites,
-                        category=parent,
-                        nsfw=ch.nsfw,
-                        position=ch.position,
-                        reason="Server clone"
-                    )
-                elif isinstance(ch, discord.VoiceChannel):
-                    await target.create_voice_channel(
-                        name=ch.name,
-                        overwrites=overwrites,
-                        category=parent,
-                        position=ch.position,
-                        bitrate=ch.bitrate,
-                        user_limit=ch.user_limit,
-                        reason="Server clone"
-                    )
-                elif isinstance(ch, discord.StageChannel):
-                    await target.create_stage_channel(
-                        name=ch.name,
-                        overwrites=overwrites,
-                        category=parent,
-                        position=ch.position,
-                        reason="Server clone"
-                    )
-            except Exception as e:
-                print(f"Failed to clone channel {ch.name}: {e}")
-
-        # Notify the user
-        try:
-            await interaction.user.send(f"✅ Server layout cloned successfully from **{source.name}** to **{target.name}**!")
-        except:
+            elif isinstance(ch, discord.VoiceChannel):
+                await target_guild.create_voice_channel(
+                    name=ch.name,
+                    overwrites=overwrites,
+                    category=parent,
+                    bitrate=min(ch.bitrate, 96000),
+                    user_limit=ch.user_limit,
+                    reason="Template application",
+                )
+            elif isinstance(ch, discord.StageChannel):
+                await target_guild.create_stage_channel(
+                    name=ch.name,
+                    overwrites=overwrites,
+                    category=parent,
+                    reason="Template application",
+                )
+        except Exception:
             pass
 
-    except Exception as e:
-        try:
-            await interaction.user.send(f"❌ Server clone failed: {e}")
-        except:
-            pass
+    # 6. DM the owner since all channels were wiped
+    try:
+        embed = discord.Embed(
+            title="✅ Template Applied!",
+            description=(
+                f"The template from **{template_guild.name}** has been successfully "
+                f"applied to **{target_guild.name}**."
+            ),
+            color=0x57F287,
+        )
+        await interaction.user.send(embed=embed)
+    except Exception:
+        pass
 
-# ── Cog ─────────────────────────────────────────────────────────
+
+# ── Cog ──────────────────────────────────────────────────────────
 class TemplateUse(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(
         name="templateuse",
-        description="Clone a server layout from the template server (DELETES EVERYTHING)"
+        description="Apply a server template — replaces all channels and roles"
     )
     async def templateuse(self, interaction: discord.Interaction):
         if interaction.user.id != interaction.guild.owner_id:
             return await interaction.response.send_message(
-                "❌ Only the server owner can use this.",
-                ephemeral=True
-            )
-
-        source_guild = self.bot.get_guild(SOURCE_SERVER_ID)
-        if not source_guild:
-            return await interaction.response.send_message(
-                "❌ Template source server not found or bot is not in it.",
+                "❌ Only the server owner can use this command.",
                 ephemeral=True
             )
 
         await interaction.response.send_message(
-            f"⚠️ This will delete **all channels and roles** in **{interaction.guild.name}** and clone **{source_guild.name}** layout. Continue?",
-            view=ConfirmView(interaction.guild, source_guild),
-            ephemeral=True
+            "🗂️ **Select a template to apply to this server:**",
+            view=TemplateSelectView(interaction.guild, self.bot),
+            ephemeral=True,
         )
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TemplateUse(bot))
