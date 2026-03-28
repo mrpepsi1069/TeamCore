@@ -1,4 +1,4 @@
-"""cogs/times.py — Multiple time-slot polls."""
+# cogs/times.py — Multiple time-slot polls
 
 import re
 import discord
@@ -15,9 +15,14 @@ class Times(commands.Cog):
 
     @app_commands.command(name="times", description="Create a poll for multiple time options")
     @app_commands.describe(
-        league="League name/abbreviation", role="Role to ping",
-        time1="Time option 1", time2="Time option 2", time3="Time option 3",
-        time4="Time option 4 (optional)", time5="Time option 5 (optional)", time6="Time option 6 (optional)",
+        league="League name/abbreviation",
+        role="Role to ping",
+        time1="Time option 1",
+        time2="Time option 2",
+        time3="Time option 3",
+        time4="Time option 4 (optional)",
+        time5="Time option 5 (optional)",
+        time6="Time option 6 (optional)",
     )
     async def times(
         self,
@@ -53,6 +58,7 @@ class Times(commands.Cog):
         embed.set_footer(text="Click the buttons to select your available times")
 
         view = TimesView(time_options, league)
+
         try:
             await interaction.channel.send(
                 content=role.mention,
@@ -60,41 +66,53 @@ class Times(commands.Cog):
                 view=view,
                 allowed_mentions=discord.AllowedMentions(roles=True),
             )
+
             await interaction.followup.send(
-                embed=success_embed("Times Poll Created", f"Created poll for **{league}** with {len(time_options)} options!"),
+                embed=success_embed(
+                    "Times Poll Created",
+                    f"Created poll for **{league}** with {len(time_options)} options!"
+                ),
                 ephemeral=True,
             )
+
         except discord.Forbidden:
             await interaction.followup.send(
-                embed=error_embed("Missing Permissions", "I need Send Messages, Embed Links, and Mention Roles permissions."),
+                embed=error_embed(
+                    "Missing Permissions",
+                    "I need Send Messages, Embed Links, and Mention Roles permissions."
+                ),
                 ephemeral=True,
             )
 
 
 def _parse_sections(desc: str) -> tuple[str, list[tuple[str, list[str]]]]:
     """Parse embed description into header + list of (time, [user_ids])."""
-    # Split off the header lines before the first time slot
     parts = desc.split("🕐 **")
+
     header = parts[0].strip()
+    header = re.sub(r"\n+Select which times work for you:.*", "", header, flags=re.DOTALL).strip()
+
     sections = []
     for part in parts[1:]:
-        # part looks like: "9:00**\n• <@123> • <@456>\n\n" or "9:00**\n• None yet\n\n"
         if "**" not in part:
             continue
         time_str, rest = part.split("**", 1)
         user_ids = re.findall(r"<@(\d+)>", rest)
         sections.append((time_str, user_ids))
+
     return header, sections
 
 
 def _build_desc(header: str, sections: list[tuple[str, list[str]]]) -> str:
     desc = header + "\n\nSelect which times work for you:\n\n"
+
     for t, users in sections:
         desc += f"🕐 **{t}**\n"
         if users:
             desc += "• " + " • ".join(f"<@{uid}>" for uid in users) + "\n\n"
         else:
             desc += "• None yet\n\n"
+
     return desc.strip()
 
 
@@ -102,14 +120,18 @@ class TimesView(discord.ui.View):
     def __init__(self, time_options: list[str], league: str):
         super().__init__(timeout=None)
         self.time_options = time_options
+        self.league = league
+
         for i, t in enumerate(time_options):
             label = t[:80] if len(t) <= 80 else t[:77] + "..."
-            safe_time = re.sub(r"\s+", "_", t)[:50]
+            safe_time = re.sub(r"\s+", "*", t)[:50]
+
             btn = discord.ui.Button(
                 label=label,
                 style=discord.ButtonStyle.primary,
-                custom_id=f"times_{i}_{safe_time}",
+                custom_id=f"times*{i}_{safe_time}",
             )
+
             btn.callback = self._make_callback(i)
             self.add_item(btn)
 
@@ -126,21 +148,26 @@ class TimesView(discord.ui.View):
                 return await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
 
             t, users = sections[index]
+
             if uid in users:
                 users.remove(uid)
             else:
                 users.append(uid)
+
             sections[index] = (t, users)
 
             new_embed = discord.Embed.from_dict(embed.to_dict())
             new_embed.description = _build_desc(header, sections)
+
             await interaction.message.edit(embed=new_embed)
 
             selected = [t for t, users in sections if uid in users]
+
             if selected:
                 msg = "✅ Your selected times:\n" + "\n".join(f"• {t}" for t in selected)
             else:
                 msg = "ℹ️ You haven't selected any times yet."
+
             await interaction.followup.send(msg, ephemeral=True)
 
         return callback
