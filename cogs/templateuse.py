@@ -24,19 +24,22 @@ async def fetch_template(bot, code: str):
                 raise Exception(f"Failed to fetch template: {resp.status}")
             return await resp.json()
 
-# ── Overwrites helper ───────────────────────────────────────────
+# ── Build permission overwrites ─────────────────────────────────
 def build_overwrites(ch, guild, role_map):
     overwrites = {}
     for ow in ch.get("permission_overwrites", []):
         allow = discord.Permissions(ow["allow"])
         deny = discord.Permissions(ow["deny"])
+        target = None
         if ow["type"] == 0:  # role
             if ow["id"] == 0:
                 target = guild.default_role
             else:
                 target = role_map.get(ow["id"])
-            if target:
-                overwrites[target] = discord.PermissionOverwrite.from_pair(allow, deny)
+        elif ow["type"] == 1:  # member
+            target = guild.get_member(int(ow["id"]))
+        if target:
+            overwrites[target] = discord.PermissionOverwrite.from_pair(allow, deny)
     return overwrites
 
 # ── Confirmation view ───────────────────────────────────────────
@@ -55,6 +58,7 @@ class ConfirmView(discord.ui.View):
             view=self
         )
         await apply_template(interaction, self.template_code)
+        self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -110,8 +114,8 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
         for channel in guild.channels:
             try:
                 await channel.delete(reason="Template application")
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to delete channel {channel.name}: {e}")
 
         # ── Delete all roles except @everyone/managed ──
         for role in guild.roles:
@@ -119,8 +123,8 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
                 continue
             try:
                 await role.delete(reason="Template application")
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to delete role {role.name}: {e}")
 
         # ── Create roles ──
         role_map = {}
@@ -135,8 +139,8 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
                     reason="Template application",
                 )
                 role_map[role["id"]] = new_role
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to create role {role['name']}: {e}")
 
         # ── Create categories first ──
         category_map = {}
@@ -151,8 +155,8 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
                     reason="Template application",
                 )
                 category_map[ch["id"]] = cat
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to create category {ch['name']}: {e}")
 
         # ── Create all other channels ──
         for ch in serialized["channels"]:
@@ -176,7 +180,7 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
                         overwrites=overwrites,
                         reason="Template application",
                     )
-                elif ch["type"] == 5:  # announcement
+                elif ch["type"] == 5:  # announcement/news
                     await guild.create_text_channel(
                         name=ch["name"],
                         topic=ch.get("topic", ""),
@@ -192,8 +196,8 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
                         overwrites=overwrites,
                         reason="Template application",
                     )
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to create channel {ch['name']}: {e}")
 
         # ── Notify user ──
         try:
