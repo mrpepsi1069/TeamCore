@@ -3,6 +3,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import aiohttp
 
 # ── Templates registry ──────────────────────────────────────────
 TEMPLATES = {
@@ -13,22 +14,36 @@ TEMPLATES = {
     },
 }
 
+# ── Fetch template via API ──────────────────────────────────────
+async def fetch_template(bot, code: str):
+    url = f"https://discord.com/api/v10/guilds/templates/{code}"
+    headers = {
+        "Authorization": f"Bot {bot.http.token}"
+    }
 
-# ── Confirmation view ────────────────────────────────────────────
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                raise Exception(f"Failed to fetch template: {resp.status}")
+            return await resp.json()
+
+# ── Confirmation view ───────────────────────────────────────────
 class ConfirmView(discord.ui.View):
     def __init__(self, template_name: str, template_code: str):
         super().__init__(timeout=30)
         self.template_name = template_name
         self.template_code = template_code
-        self.confirmed = False
 
     @discord.ui.button(label="Yes, apply template", style=discord.ButtonStyle.danger, emoji="⚠️")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.confirmed = True
-        self.stop()
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="⏳ Applying template... this may take a moment.", view=self)
+
+        await interaction.response.edit_message(
+            content="⏳ Applying template... this may take a moment.",
+            view=self
+        )
+
         await apply_template(interaction, self.template_code)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️")
@@ -36,18 +51,11 @@ class ConfirmView(discord.ui.View):
         self.stop()
         await interaction.response.edit_message(content="❌ Cancelled.", view=None)
 
-    async def on_timeout(self):
-        try:
-            for item in self.children:
-                item.disabled = True
-        except Exception:
-            pass
-
-
 # ── Template select view ─────────────────────────────────────────
 class TemplateSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
+
         options = [
             discord.SelectOption(
                 label=name,
@@ -57,31 +65,32 @@ class TemplateSelectView(discord.ui.View):
             )
             for name, data in TEMPLATES.items()
         ]
-        self.select = discord.ui.Select(
+
+        select = discord.ui.Select(
             placeholder="Choose a template...",
             min_values=1,
             max_values=1,
             options=options,
         )
-        self.select.callback = self.on_select
-        self.add_item(self.select)
+
+        select.callback = self.on_select
+        self.add_item(select)
 
     async def on_select(self, interaction: discord.Interaction):
-        chosen = self.select.values[0]
+        chosen = interaction.data["values"][0]
         template = TEMPLATES[chosen]
-        self.stop()
 
         confirm_view = ConfirmView(chosen, template["code"])
+
         await interaction.response.edit_message(
             content=(
                 f"## {template['emoji']} {chosen}\n"
                 f"{template['description']}\n\n"
-                f"⚠️ **WARNING:** This will **delete ALL existing channels and roles** and replace them with the template.\n"
-                f"**This cannot be undone.** Are you sure?"
+                f"⚠️ **WARNING:** This will delete ALL channels and roles.\n"
+                f"**This cannot be undone. Continue?**"
             ),
             view=confirm_view,
         )
-
 
 # ── Core apply logic ─────────────────────────────────────────────
 async def apply_template(interaction: discord.Interaction, template_code: str):
@@ -89,157 +98,147 @@ async def apply_template(interaction: discord.Interaction, template_code: str):
     bot = interaction.client
 
     try:
-        # Fetch template from Discord
-        template = await bot.fetch_guild_template(template_code)
+        data = await fetch_template(bot, template_code)
+        serialized = data["serialized_source_guild"]
 
-        # Delete all existing channels
+        # ── Delete channels ──
         for channel in guild.channels:
             try:
                 await channel.delete(reason="Template application")
-            except Exception:
+            except:
                 pass
 
-        # Delete all non-default roles (skip @everyone and bot roles)
+        # ── Delete roles ──
         for role in guild.roles:
             if role.is_default() or role.managed:
                 continue
             try:
                 await role.delete(reason="Template application")
-            except Exception:
+            except:
                 pass
 
-        # Apply the template — creates all roles + channels from it
-        await template.sync()
+        # ── Create roles ──
+        role_map = {}
 
-        # Use Guild.edit to apply template to THIS guild
-        # Discord.py doesn't have a direct "apply template to existing guild" method
-        # so we manually create from the serialized template data
-        serialized = template.source_guild
-
-        # Create roles first
-        role_map = {}  # template role id -> created role
-        for t_role in sorted(serialized.roles, key=lambda r: r.get("position", 0)):
-            if t_role.get("id") == 0:  # @everyone
+        for role in sorted(serialized["roles"], key=lambda r: r.get("position", 0)):
+            if role["id"] == 0:
                 continue
+
             try:
-                perms = discord.Permissions(t_role.get("permissions", 0))
-                color = discord.Color(t_role.get("color", 0))
                 new_role = await guild.create_role(
-                    name=t_role["name"],
-                    permissions=perms,
-                    color=color,
-                    hoist=t_role.get("hoist", False),
-                    mentionable=t_role.get("mentionable", False),
+                    name=role["name"],
+                    permissions=discord.Permissions(role["permissions"]),
+                    color=discord.Color(role["color"]),
+                    hoist=role.get("hoist", False),
+                    mentionable=role.get("mentionable", False),
                     reason="Template application",
                 )
-                role_map[t_role["id"]] = new_role
-            except Exception:
+                role_map[role["id"]] = new_role
+            except:
                 pass
 
-        # Create categories first, then channels
-        category_map = {}  # template channel id -> created category
+        # ── Create categories ──
+        category_map = {}
 
-        for t_ch in serialized.channels:
-            if t_ch.get("type") != 4:  # category
+        for ch in serialized["channels"]:
+            if ch["type"] != 4:
                 continue
+
             try:
-                overwrites = _build_overwrites(t_ch, guild, role_map)
+                overwrites = build_overwrites(ch, guild, role_map)
+
                 cat = await guild.create_category(
-                    name=t_ch["name"],
+                    name=ch["name"],
                     overwrites=overwrites,
                     reason="Template application",
                 )
-                category_map[t_ch["id"]] = cat
-            except Exception:
+
+                category_map[ch["id"]] = cat
+            except:
                 pass
 
-        # Now create text/voice channels
-        for t_ch in serialized.channels:
-            if t_ch.get("type") == 4:
+        # ── Create channels ──
+        for ch in serialized["channels"]:
+            if ch["type"] == 4:
                 continue
-            try:
-                overwrites = _build_overwrites(t_ch, guild, role_map)
-                parent = category_map.get(t_ch.get("parent_id"))
-                ch_type = t_ch.get("type", 0)
 
-                if ch_type == 0:  # text
+            try:
+                overwrites = build_overwrites(ch, guild, role_map)
+                parent = category_map.get(ch.get("parent_id"))
+
+                if ch["type"] == 0:
                     await guild.create_text_channel(
-                        name=t_ch["name"],
-                        topic=t_ch.get("topic") or "",
+                        name=ch["name"],
+                        topic=ch.get("topic", ""),
                         category=parent,
                         overwrites=overwrites,
                         reason="Template application",
                     )
-                elif ch_type == 2:  # voice
+
+                elif ch["type"] == 2:
                     await guild.create_voice_channel(
-                        name=t_ch["name"],
+                        name=ch["name"],
                         category=parent,
                         overwrites=overwrites,
                         reason="Template application",
                     )
-            except Exception:
+            except:
                 pass
 
-        # Try to send success DM to the user since channels were wiped
+        # ── Notify user ──
         try:
             await interaction.user.send(
-                embed=discord.Embed(
-                    title="✅ Template Applied!",
-                    description=f"The **{template.name}** template has been successfully applied to **{guild.name}**.",
-                    color=0x57F287,
-                )
+                f"✅ Template **{data['name']}** applied successfully to **{guild.name}**!"
             )
-        except Exception:
+        except:
             pass
 
     except Exception as e:
         try:
-            await interaction.user.send(f"❌ Template application failed: {e}")
-        except Exception:
+            await interaction.user.send(f"❌ Template failed: {e}")
+        except:
             pass
 
-
-def _build_overwrites(t_ch: dict, guild: discord.Guild, role_map: dict) -> dict:
+# ── Overwrites helper ───────────────────────────────────────────
+def build_overwrites(ch, guild, role_map):
     overwrites = {}
-    for overwrite in t_ch.get("permission_overwrites", []):
-        allow = discord.Permissions(overwrite.get("allow", 0))
-        deny  = discord.Permissions(overwrite.get("deny", 0))
-        ow_id = overwrite.get("id")
 
-        if overwrite.get("type") == 0:  # role
-            if ow_id == 0:  # @everyone
+    for ow in ch.get("permission_overwrites", []):
+        allow = discord.Permissions(ow["allow"])
+        deny = discord.Permissions(ow["deny"])
+
+        if ow["type"] == 0:  # role
+            if ow["id"] == 0:
                 target = guild.default_role
             else:
-                target = role_map.get(ow_id)
+                target = role_map.get(ow["id"])
+
             if target:
                 overwrites[target] = discord.PermissionOverwrite.from_pair(allow, deny)
+
     return overwrites
 
-
-# ── Cog ──────────────────────────────────────────────────────────
+# ── Cog ─────────────────────────────────────────────────────────
 class TemplateUse(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(
         name="templateuse",
-        description="Apply a server template — replaces all channels and roles"
+        description="Apply a server template (DELETES EVERYTHING)"
     )
     async def templateuse(self, interaction: discord.Interaction):
-        # Owner only
         if interaction.user.id != interaction.guild.owner_id:
             return await interaction.response.send_message(
-                "❌ Only the server owner can apply templates.",
+                "❌ Only the server owner can use this.",
                 ephemeral=True
             )
 
-        view = TemplateSelectView()
         await interaction.response.send_message(
-            "🗂️ **Select a template to apply to this server:**",
-            view=view,
+            "🗂️ Select a template:",
+            view=TemplateSelectView(),
             ephemeral=True,
         )
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TemplateUse(bot))
