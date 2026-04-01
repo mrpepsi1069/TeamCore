@@ -111,7 +111,7 @@ COGS = [
     "cogs.ringadd", "cogs.lineup", "cogs.depthchart", "cogs.league",
     "cogs.gametime", "cogs.times", "cogs.contract",
     "cogs.globalannouncement", "cogs.templateuse", "cogs.join",
-    "cogs.logging",
+    "cogs.logging", "cogs.botkick",
 ]
 
 
