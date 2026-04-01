@@ -17,15 +17,36 @@ class Guilds(commands.Cog):
                 content="❌ You do not have permission to use this.", ephemeral=True
             )
 
-        guild_lines = [
-            f"**{g.name}**\nID: {g.id}\nMembers: {g.member_count}"
-            for g in self.bot.guilds
-        ]
-        description = "\n\n".join(guild_lines)[:4000]
+        sorted_guilds = sorted(self.bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
 
-        embed = discord.Embed(title="📊 Bot Guilds", description=description, color=0x5865F2)
-        embed.set_footer(text=f"Total Servers: {len(self.bot.guilds)}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        guild_lines = [
+            f"`{i+1}.` **{g.name}**\n　ID: `{g.id}`\n　Members: `{g.member_count}`"
+            for i, g in enumerate(sorted_guilds)
+        ]
+
+        # Split into chunks if too long
+        chunks = []
+        current = ""
+        for line in guild_lines:
+            if len(current) + len(line) + 2 > 4000:
+                chunks.append(current.strip())
+                current = line + "\n\n"
+            else:
+                current += line + "\n\n"
+        if current:
+            chunks.append(current.strip())
+
+        await interaction.response.defer(ephemeral=True)
+
+        for i, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title=f"📊 Bot Guilds {f'({i+1}/{len(chunks)})' if len(chunks) > 1 else ''}",
+                description=chunk,
+                color=0x5865F2
+            )
+            if i == 0:
+                embed.set_footer(text=f"Total Servers: {len(self.bot.guilds)} • Sorted by member count")
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
