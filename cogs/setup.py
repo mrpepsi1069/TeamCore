@@ -1,4 +1,4 @@
-"""cogs/setup.py — Full server setup with checklist embed and role hierarchy"""
+"""cogs/setup.py — Full server setup with dropdowns (no modals)"""
 
 import discord
 from discord import app_commands
@@ -38,18 +38,18 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
 
     embed = discord.Embed(
         title="⚙️ TeamCore Setup",
-        description="Configure your server below. Use the buttons to set each item.",
+        description="Configure your server using the buttons below.",
         color=0x5865F2,
     )
 
-    # Roles section
+    # Roles
     role_lines = ""
     for key in ROLE_HIERARCHY:
         rid = cfg.get(key)
         role_lines += f"{check(rid)} **{ROLE_LABELS[key]}** — {f'<@&{rid}>' if rid else 'Not set'}\n"
     embed.add_field(name="👥 Role Hierarchy", value=role_lines, inline=False)
 
-    # Channels section
+    # Channels
     ch_lines = ""
     for key, label in CHANNEL_KEYS.items():
         cid = cfg.get(key)
@@ -61,6 +61,7 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
     done = sum(1 for k in list(ROLE_HIERARCHY) + list(CHANNEL_KEYS) if cfg.get(k))
     bar_filled = int((done / total) * 10)
     bar = "█" * bar_filled + "░" * (10 - bar_filled)
+
     embed.add_field(
         name="📊 Progress",
         value=f"`{bar}` {done}/{total} complete",
@@ -71,131 +72,110 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
     return embed
 
 
-class RoleSetModal(discord.ui.Modal):
-    def __init__(self, key: str, label: str, view_ref):
-        super().__init__(title=f"Set {label}")
-        self.key = key
-        self.view_ref = view_ref
-        self.role_input = discord.ui.TextInput(
-            label=f"{label} Role ID or @mention",
-            placeholder="Paste the role ID (e.g. 123456789012345678)",
-            max_length=30,
+# ─────────────────────────────────────────────
+# DROPDOWNS
+# ─────────────────────────────────────────────
+
+class RoleSelect(discord.ui.RoleSelect):
+    def __init__(self, key: str, label: str):
+        super().__init__(
+            placeholder=f"Select {label}",
+            min_values=1,
+            max_values=1
         )
-        self.add_item(self.role_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = self.role_input.value.strip().strip("<@&>")
-        try:
-            role_id = int(raw)
-            role = interaction.guild.get_role(role_id)
-            if not role:
-                return await interaction.response.send_message(
-                    "❌ Role not found. Make sure you paste a valid role ID.", ephemeral=True
-                )
-        except ValueError:
-            return await interaction.response.send_message(
-                "❌ Invalid input. Please paste a role ID.", ephemeral=True
-            )
-
-        await db.set_guild_config(str(interaction.guild_id), {self.key: role_id})
-        embed = await build_status_embed(str(interaction.guild_id))
-        await interaction.response.edit_message(embed=embed, view=self.view_ref)
-
-
-class ChannelSetModal(discord.ui.Modal):
-    def __init__(self, key: str, label: str, view_ref):
-        super().__init__(title=f"Set {label}")
         self.key = key
-        self.view_ref = view_ref
-        self.ch_input = discord.ui.TextInput(
-            label=f"{label} Channel ID or #mention",
-            placeholder="Paste the channel ID (e.g. 123456789012345678)",
-            max_length=30,
-        )
-        self.add_item(self.ch_input)
+        self.label = label
 
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = self.ch_input.value.strip().strip("<#>")
-        try:
-            ch_id = int(raw)
-            ch = interaction.guild.get_channel(ch_id)
-            if not ch:
-                return await interaction.response.send_message(
-                    "❌ Channel not found. Make sure you paste a valid channel ID.", ephemeral=True
-                )
-        except ValueError:
-            return await interaction.response.send_message(
-                "❌ Invalid input. Please paste a channel ID.", ephemeral=True
-            )
+    async def callback(self, interaction: discord.Interaction):
+        role = self.values[0]
+        await db.set_guild_config(str(interaction.guild_id), {self.key: role.id})
 
-        await db.set_guild_config(str(interaction.guild_id), {self.key: ch_id})
         embed = await build_status_embed(str(interaction.guild_id))
-        await interaction.response.edit_message(embed=embed, view=self.view_ref)
+        await interaction.response.edit_message(embed=embed, view=SetupView())
 
+
+class ChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, key: str, label: str):
+        super().__init__(
+            placeholder=f"Select {label}",
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news]
+        )
+        self.key = key
+        self.label = label
+
+    async def callback(self, interaction: discord.Interaction):
+        channel = self.values[0]
+        await db.set_guild_config(str(interaction.guild_id), {self.key: channel.id})
+
+        embed = await build_status_embed(str(interaction.guild_id))
+        await interaction.response.edit_message(embed=embed, view=SetupView())
+
+
+# ─────────────────────────────────────────────
+# MAIN VIEW
+# ─────────────────────────────────────────────
 
 class SetupView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
 
-    # ── Role buttons ────────────────────────────────────────────
+    async def send_select(self, interaction, select):
+        view = discord.ui.View()
+        view.add_item(select)
+
+        await interaction.response.send_message(
+            "Make a selection below:",
+            view=view,
+            ephemeral=True
+        )
+
+    # ROLE BUTTONS
 
     @discord.ui.button(label="Assistant Coach", style=discord.ButtonStyle.secondary, emoji="🏈", row=0)
     async def set_ac(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            RoleSetModal("assistant_coach_role", "Assistant Coach", self)
-        )
+        await self.send_select(interaction, RoleSelect("assistant_coach_role", "Assistant Coach"))
 
     @discord.ui.button(label="Head Coach", style=discord.ButtonStyle.secondary, emoji="🏈", row=0)
     async def set_hc(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            RoleSetModal("head_coach_role", "Head Coach", self)
-        )
+        await self.send_select(interaction, RoleSelect("head_coach_role", "Head Coach"))
 
     @discord.ui.button(label="General Manager", style=discord.ButtonStyle.secondary, emoji="💼", row=0)
     async def set_gm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            RoleSetModal("general_manager_role", "General Manager", self)
-        )
+        await self.send_select(interaction, RoleSelect("general_manager_role", "General Manager"))
 
     @discord.ui.button(label="Franchise Owner", style=discord.ButtonStyle.secondary, emoji="👑", row=1)
     async def set_fo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            RoleSetModal("franchise_owner_role", "Franchise Owner", self)
-        )
+        await self.send_select(interaction, RoleSelect("franchise_owner_role", "Franchise Owner"))
 
     @discord.ui.button(label="Admin", style=discord.ButtonStyle.secondary, emoji="🛡️", row=1)
     async def set_admin(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            RoleSetModal("admin_role", "Admin", self)
-        )
+        await self.send_select(interaction, RoleSelect("admin_role", "Admin"))
 
-    # ── Channel buttons ──────────────────────────────────────────
+    # CHANNEL BUTTONS
 
     @discord.ui.button(label="Log Channel", style=discord.ButtonStyle.primary, emoji="📋", row=2)
     async def set_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            ChannelSetModal("log_channel", "Log Channel", self)
-        )
+        await self.send_select(interaction, ChannelSelect("log_channel", "Log Channel"))
 
     @discord.ui.button(label="Announcements", style=discord.ButtonStyle.primary, emoji="📢", row=2)
     async def set_announce(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            ChannelSetModal("announce_channel", "Announcements Channel", self)
-        )
+        await self.send_select(interaction, ChannelSelect("announce_channel", "Announcements Channel"))
 
     @discord.ui.button(label="Gametime Channel", style=discord.ButtonStyle.primary, emoji="⏰", row=2)
     async def set_gametime(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            ChannelSetModal("gametime_channel", "Gametime Channel", self)
-        )
+        await self.send_select(interaction, ChannelSelect("gametime_channel", "Gametime Channel"))
 
-    # ── Reset ────────────────────────────────────────────────────
+    # RESET
 
     @discord.ui.button(label="Reset All", style=discord.ButtonStyle.danger, emoji="🗑️", row=3)
     async def reset_all(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await db.set_guild_config(str(interaction.guild_id), {
-            key: None for key in list(ROLE_HIERARCHY) + list(CHANNEL_KEYS)
-        })
+        await db.set_guild_config(
+            str(interaction.guild_id),
+            {key: None for key in list(ROLE_HIERARCHY) + list(CHANNEL_KEYS)}
+        )
+
         embed = await build_status_embed(str(interaction.guild_id))
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -203,6 +183,10 @@ class SetupView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
+
+# ─────────────────────────────────────────────
+# COG
+# ─────────────────────────────────────────────
 
 class Setup(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -212,11 +196,16 @@ class Setup(commands.Cog):
     async def setup(self, interaction: discord.Interaction):
         if interaction.user.id != interaction.guild.owner_id:
             return await interaction.response.send_message(
-                "❌ Only the server owner can run setup.", ephemeral=True
+                "❌ Only the server owner can run setup.",
+                ephemeral=True
             )
 
         embed = await build_status_embed(str(interaction.guild_id))
-        await interaction.response.send_message(embed=embed, view=SetupView(), ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            view=SetupView(),
+            ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot):
