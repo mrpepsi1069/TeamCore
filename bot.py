@@ -1,4 +1,4 @@
-"""bot.py — LockerRoom Discord Bot (discord.py rewrite)"""
+"""bot.py — TeamCore Discord Bot (discord.py rewrite)"""
 
 import os
 import sys

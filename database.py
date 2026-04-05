@@ -129,6 +129,36 @@ async def get_guild_roles(guild_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
+# GUILD CONFIG (setup)
+# ──────────────────────────────────────────────
+
+async def get_guild_config(guild_id: str) -> dict | None:
+    if not _check():
+        return None
+    return await _db.guild_config.find_one({"guild_id": guild_id})
+
+
+async def set_guild_config(guild_id: str, updates: dict) -> None:
+    if not _check():
+        return
+    set_fields = {k: v for k, v in updates.items() if v is not None}
+    unset_fields = {k: "" for k, v in updates.items() if v is None}
+
+    op = {}
+    if set_fields:
+        op["$set"] = {**set_fields, "guild_id": guild_id}
+    if unset_fields:
+        op["$unset"] = unset_fields
+
+    if op:
+        await _db.guild_config.update_one(
+            {"guild_id": guild_id},
+            op,
+            upsert=True
+        )
+
+
+# ──────────────────────────────────────────────
 # LEAGUES
 # ──────────────────────────────────────────────
 

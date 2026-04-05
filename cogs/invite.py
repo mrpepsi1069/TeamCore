@@ -16,7 +16,7 @@ class Invite(commands.Cog):
             f"?client_id={self.bot.user.id}&permissions=8&scope=bot%20applications.commands"
         )
         embed = discord.Embed(
-            title="📨 Invite LockerRoom Bot",
+            title="📨 Invite TeamCore Bot",
             description=f"[Click here to invite me to your server!]({link})",
             color=0x5865F2,
         )

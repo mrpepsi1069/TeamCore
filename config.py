@@ -16,7 +16,7 @@ EMOJIS = {
 }
 
 PREMIUM = {
-    "price":    3,
+    "price":    4,
     "currency": "USD",
     "features": [
         "Auto-DM game times to team members",

@@ -1,30 +1,81 @@
-"""utils/permissions.py — Role-based permission helpers."""
+"""utils/permissions.py — Role-based permission checks using DB config"""
 
 import discord
+from discord.ext import commands
 import database as db
 
 
-async def has_owner_perms(interaction: discord.Interaction) -> bool:
-    if interaction.guild.owner_id == interaction.user.id:
+async def _get_config(guild_id: str) -> dict:
+    return await db.get_guild_config(guild_id) or {}
+
+
+async def _has_role(interaction: discord.Interaction, *role_keys: str) -> bool:
+    """Returns True if the user has any of the specified roles or higher."""
+    if interaction.user.id == interaction.guild.owner_id:
         return True
-    roles = await db.get_guild_roles(str(interaction.guild_id))
-    owner_role_id = roles.get("owner")
-    if owner_role_id:
-        return interaction.user.get_role(int(owner_role_id)) is not None
+
+    cfg = await _get_config(str(interaction.guild_id))
+    member = interaction.user
+
+    for key in role_keys:
+        rid = cfg.get(key)
+        if rid and member.get_role(int(rid)):
+            return True
     return False
+
+
+# ── Permission levels ────────────────────────────────────────────
+# Each level includes itself and all levels above it
+
+async def has_owner_perms(interaction: discord.Interaction) -> bool:
+    """Bot owner only (hardcoded user ID)."""
+    return interaction.user.id == 1374932337917165702
+
+
+async def has_admin_perms(interaction: discord.Interaction) -> bool:
+    """Admin, Franchise Owner, General Manager, Head Coach, Assistant Coach — or server owner."""
+    return await _has_role(interaction,
+        "admin_role",
+        "franchise_owner_role",
+        "general_manager_role",
+        "head_coach_role",
+        "assistant_coach_role",
+    )
+
+
+async def has_franchise_owner_perms(interaction: discord.Interaction) -> bool:
+    """Franchise Owner, Admin — or server owner."""
+    return await _has_role(interaction,
+        "admin_role",
+        "franchise_owner_role",
+    )
+
+
+async def has_manager_perms(interaction: discord.Interaction) -> bool:
+    """General Manager and above — or server owner."""
+    return await _has_role(interaction,
+        "admin_role",
+        "franchise_owner_role",
+        "general_manager_role",
+    )
 
 
 async def has_coach_perms(interaction: discord.Interaction) -> bool:
-    if interaction.guild.owner_id == interaction.user.id:
-        return True
-    roles = await db.get_guild_roles(str(interaction.guild_id))
-    if roles.get("owner") and interaction.user.get_role(int(roles["owner"])):
-        return True
-    if roles.get("coach") and interaction.user.get_role(int(roles["coach"])):
-        return True
-    return False
+    """Head Coach and above — or server owner."""
+    return await _has_role(interaction,
+        "admin_role",
+        "franchise_owner_role",
+        "general_manager_role",
+        "head_coach_role",
+    )
 
 
-# Aliases
-has_manager_perms = has_coach_perms
-has_staff_perms = has_coach_perms
+async def has_staff_perms(interaction: discord.Interaction) -> bool:
+    """Assistant Coach and above — or server owner."""
+    return await _has_role(interaction,
+        "admin_role",
+        "franchise_owner_role",
+        "general_manager_role",
+        "head_coach_role",
+        "assistant_coach_role",
+    )

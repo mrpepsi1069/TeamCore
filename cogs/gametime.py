@@ -103,7 +103,7 @@ class Gametime(commands.Cog):
         embed.add_field(name="✅ Can Make (0)",    value="• None yet", inline=False)
         embed.add_field(name="❌ Can't Make (0)", value="• None yet", inline=False)
         embed.add_field(name="❓ Unsure (0)",      value="• None yet", inline=False)
-        embed.set_footer(text="LockerRoom | Gametime Manager")
+        embed.set_footer(text="TeamCore | Gametime Poll")
 
         try:
             msg = await interaction.channel.send(

@@ -69,7 +69,7 @@ def awards_embed(user_data: dict) -> discord.Embed:
 
 def help_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="LockerRoom Bot Commands",
+        title="TeamCore Commands",
         description="Team chat bot for league teams",
         color=COLORS["primary"],
     )
@@ -157,5 +157,5 @@ def help_embed() -> discord.Embed:
         ),
         inline=False,
     )
-    embed.set_footer(text="LockerRoom Bot • By Ghostie")
+    embed.set_footer(text="TeamCore • By Korvert")
     return embed
