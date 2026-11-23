@@ -62,6 +62,13 @@ class RoleSelectView(discord.ui.View):
             view=self
         )
 
+        # role.members is only complete once the member list is loaded (big servers lazy-load it)
+        if not interaction.guild.chunked:
+            try:
+                await interaction.guild.chunk()
+            except Exception:
+                pass
+
         # Collect unique non-bot members
         seen = set()
         members = []
@@ -72,6 +79,8 @@ class RoleSelectView(discord.ui.View):
                     members.append(m)
 
         if not members:
+            # The view was already disabled and says "Sending DMs..." — don't leave it like that.
+            await self.original_interaction.edit_original_response(content="❌ No members found.", view=None)
             return await interaction.followup.send(
                 embed=error_embed("No Members", "No members found in the selected roles."),
                 ephemeral=True

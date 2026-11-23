@@ -4,9 +4,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.embeds import success_embed
+from config import SUGGESTION_CHANNEL_ID
 import database as db
-
-SUGGESTION_CHANNEL_ID = 1466284506385219686
 
 
 class Suggest(commands.Cog):
@@ -16,6 +15,7 @@ class Suggest(commands.Cog):
     @app_commands.command(name="suggest", description="Submit a suggestion")
     @app_commands.describe(suggestion="Your suggestion (max 1000 chars)")
     async def suggest(self, interaction: discord.Interaction, suggestion: app_commands.Range[str, 1, 1000]):
+        await interaction.response.defer(ephemeral=True)  # DB + channel send can exceed the 3s response window
         await db.create_suggestion(str(interaction.guild_id), str(interaction.user.id), suggestion)
 
         try:
@@ -34,7 +34,7 @@ class Suggest(commands.Cog):
         except Exception as e:
             print(f"Error sending suggestion: {e}")
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=success_embed("Suggestion Submitted", "Thank you! The server admins will review it."),
             ephemeral=True,
         )

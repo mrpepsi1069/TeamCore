@@ -3,11 +3,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import database as db
+from config import TEMPLATE_GUILD_ID
 
 # ── Add more templates here as needed ───────────────────────────
 TEMPLATES = {
     "TeamCore Default": {
-        "guild_id": 1487243792917463072,
+        "guild_id": TEMPLATE_GUILD_ID,
         "description": "Standard TeamCore layout with channels, roles & permissions",
         "emoji": "🏈",
     },
@@ -117,7 +119,8 @@ async def apply_template(
         except Exception:
             pass
 
-    # 3. Recreate roles (lowest position first)
+    # 3. Recreate roles. New roles are inserted just above @everyone, so creating the
+    #    HIGHEST role first and working down reproduces the template hierarchy.
     role_map: dict[int, discord.Role] = {}
     for role in sorted(template_guild.roles, key=lambda r: r.position, reverse=True):
         if role.is_default() or role.managed:
@@ -195,6 +198,19 @@ async def apply_template(
         except Exception:
             pass
 
+    # 5b. Every stored role/channel id (and the matchmaking board message) now points at
+    #     something that no longer exists — clear them so /setup shows the truth and
+    #     permission checks don't silently match nothing.
+    try:
+        from cogs.setup import ROLE_HIERARCHY, CHANNEL_KEYS
+        stale = {key: None for key in list(ROLE_HIERARCHY) + list(CHANNEL_KEYS)}
+        stale["matchmaking_board_message_id"] = None
+        stale["mm_ping_roles"] = None
+        stale["mm_role_message_id"] = None
+        await db.set_guild_config(str(target_guild.id), stale)
+    except Exception as e:
+        print(f"⚠️ Could not reset setup config after template: {e}")
+
     # 6. DM the owner since all channels were wiped
     try:
         embed = discord.Embed(
@@ -224,6 +240,14 @@ class TemplateUse(commands.Cog):
             return await interaction.response.send_message(
                 "❌ Only the server owner can use this command.",
                 ephemeral=True
+            )
+
+        needed = discord.Permissions(manage_channels=True, manage_roles=True)
+        if not interaction.guild.me.guild_permissions.is_superset(needed):
+            return await interaction.response.send_message(
+                "❌ I need the **Manage Channels** and **Manage Roles** permissions to apply a template. "
+                "Nothing has been changed.",
+                ephemeral=True,
             )
 
         await interaction.response.send_message(

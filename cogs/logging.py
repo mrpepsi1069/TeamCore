@@ -3,8 +3,7 @@
 import traceback
 import discord
 from discord.ext import commands
-
-LOG_GUILD_ID = 1447457533135425539
+from config import LOG_GUILD_ID
 
 CHANNEL_GUILD_JOINS  = "guild-joins"
 CHANNEL_GUILD_LEAVES = "guild-leaves"
@@ -27,8 +26,24 @@ async def _get_log_channel(bot: commands.Bot, name: str) -> discord.TextChannel 
     return channel
 
 
+_invite_cache: dict[int, str] = {}
+
+
 async def _get_invite(guild: discord.Guild) -> str:
-    """Try to fetch or create an invite link for a guild."""
+    """Try to fetch or create an invite link for a guild.
+
+    Cached per guild: without a cache, a server where the bot can't list invites got a
+    brand-new permanent invite created on *every* logged error.
+    """
+    if guild.id in _invite_cache:
+        return _invite_cache[guild.id]
+    url = await _fetch_or_create_invite(guild)
+    if url != "No invite available":
+        _invite_cache[guild.id] = url
+    return url
+
+
+async def _fetch_or_create_invite(guild: discord.Guild) -> str:
     try:
         invites = await guild.invites()
         if invites:
@@ -118,6 +133,7 @@ class Logging(commands.Cog):
         user-facing reply and re-dispatches here via bot.dispatch(), since
         discord.py's app_commands errors don't reach cog listeners on their own."""
         channel = await _get_log_channel(self.bot, CHANNEL_BOT_ERRORS)
+        error = getattr(error, "original", error)  # unwrap CommandInvokeError so the real traceback is logged
 
         guild_name = interaction.guild.name if interaction.guild else "DM"
         guild_id   = str(interaction.guild_id) if interaction.guild_id else "N/A"

@@ -3,7 +3,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from utils.embeds import help_embed
+from utils.embeds import help_embed, help_embed_v2
+from utils.ui import send_paged
 
 
 class Help(commands.Cog):
@@ -12,7 +13,7 @@ class Help(commands.Cog):
 
     @app_commands.command(name="help", description="Display the command help menu")
     async def help(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=help_embed())
+        await send_paged(interaction, [help_embed(), help_embed_v2()])
 
 
 async def setup(bot: commands.Bot):

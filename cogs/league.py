@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_coach_perms
+from utils.validation import is_valid_league_abbr, is_valid_url, sanitize_input
 import database as db
 
 
@@ -29,7 +30,19 @@ class League(commands.Cog):
         if not await has_coach_perms(interaction):
             return await interaction.response.send_message(embed=error_embed("Permission Denied", "You need Coach role or higher."), ephemeral=True)
 
-        abbr = abbreviation.upper()[:10]
+        abbr = abbreviation.strip().upper()
+        name = sanitize_input(name, 100)
+        if not is_valid_league_abbr(abbr):
+            return await interaction.response.send_message(
+                embed=error_embed("Invalid Abbreviation", "Use 2-10 letters/numbers with no spaces (e.g. `NFA`)."), ephemeral=True
+            )
+        if not name:
+            return await interaction.response.send_message(embed=error_embed("Invalid Name", "The league name can't be empty."), ephemeral=True)
+        # A bad URL makes Discord reject the recruitment message's link button later on.
+        if signup and not is_valid_url(signup):
+            return await interaction.response.send_message(
+                embed=error_embed("Invalid Link", "The signup link must start with `http://` or `https://`."), ephemeral=True
+            )
         await interaction.response.defer(ephemeral=True)
 
         existing = await db.get_league_by_abbr(str(interaction.guild_id), abbr)
@@ -45,8 +58,22 @@ class League(commands.Cog):
             )
         except discord.Forbidden:
             return await interaction.followup.send(embed=error_embed("Permission Error", "I need Manage Roles permission to create a role!"), ephemeral=True)
+        except discord.HTTPException as e:
+            return await interaction.followup.send(embed=error_embed("Couldn't Create Role", str(e)), ephemeral=True)
 
-        await db.create_league(str(interaction.guild_id), name, abbr, signup, str(role.id))
+        try:
+            created = await db.create_league(str(interaction.guild_id), name, abbr, signup, str(role.id))
+        except Exception:
+            created = None
+        if not created:
+            # Don't leave an orphaned role behind if the league couldn't be saved
+            try:
+                await role.delete(reason="League could not be saved")
+            except discord.HTTPException:
+                pass
+            return await interaction.followup.send(
+                embed=error_embed("Couldn't Save League", "Something went wrong saving the league. Nothing was created."), ephemeral=True
+            )
 
         channels = await db.get_guild_config(str(interaction.guild_id)) or {}
         if channels.get("league_log_channel"):
@@ -154,7 +181,10 @@ class League(commands.Cog):
                 emoji="🔗",
             ))
 
-        await interaction.channel.send(embed=embed, view=view)
+        try:
+            await interaction.channel.send(embed=embed, view=view)
+        except discord.HTTPException as e:
+            return await interaction.followup.send(embed=error_embed("Couldn't Post", str(e)), ephemeral=True)
         await interaction.followup.send(embed=success_embed("Recruitment Posted", f"Posted recruitment for **{league['league_name']}**!"), ephemeral=True)
 
 

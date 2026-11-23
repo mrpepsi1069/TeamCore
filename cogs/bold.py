@@ -22,8 +22,8 @@ class Bold(commands.Cog):
 
     @app_commands.command(name="bold", description="Convert text to bold Unicode characters")
     @app_commands.describe(text="Text to boldify")
-    async def bold(self, interaction: discord.Interaction, text: str):
-        await interaction.response.send_message(_boldify(text))
+    async def bold(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, 1000]):
+        await interaction.response.send_message(_boldify(text), allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot: commands.Bot):

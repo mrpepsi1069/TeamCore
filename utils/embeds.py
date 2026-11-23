@@ -2,6 +2,7 @@
 
 import discord
 from config import COLORS
+from utils.lineup_manager import sort_players_by_position
 
 
 def _base(title: str, description: str, color: int) -> discord.Embed:
@@ -30,13 +31,22 @@ def lineup_embed(lineup: dict) -> discord.Embed:
         description=lineup.get("description") or "",
         color=COLORS["primary"],
     )
-    players = lineup.get("players") or []
-    value = (
-        "\n".join(f"**{p['position']}:** <@{p['user_id']}>" for p in players)
-        if players
-        else "No players added yet."
-    )
-    embed.add_field(name="Players", value=value, inline=False)
+    players = sort_players_by_position(lineup.get("players") or [])
+    if not players:
+        embed.add_field(name="Players", value="No players added yet.", inline=False)
+        return embed
+
+    # A field value is capped at 1024 characters, so large lineups are split across fields
+    # instead of making the whole command fail.
+    chunk, size, first = [], 0, True
+    for line in (f"**{p['position']}:** <@{p['user_id']}>" for p in players):
+        if size + len(line) + 1 > 1000:
+            embed.add_field(name="Players" if first else "\u200b", value="\n".join(chunk), inline=False)
+            chunk, size, first = [], 0, False
+        chunk.append(line)
+        size += len(line) + 1
+    if chunk:
+        embed.add_field(name="Players" if first else "\u200b", value="\n".join(chunk), inline=False)
     return embed
 
 
@@ -85,7 +95,15 @@ def help_embed() -> discord.Embed:
             "/bold - Boldify text\n"
             "/fban - Fake ban\n"
             "/fkick - Fake kick\n"
-            "/ping - Check bot latency"
+            "/ping - Check bot latency\n"
+            "/premium - View Premium plans & this server's status\n"
+            "/leaderboard teams|rings|awards - Rankings\n"
+            "/serverinfo - Server details\n"
+            "/record view|list - Team records\n"
+            "/suggestion submit - Suggest something\n"
+            "/memberstats view - Server growth\n"
+            "/activity top|user - Most active members\n"
+            "/contract view - View your contract"
         ),
         inline=False,
     )
@@ -115,8 +133,10 @@ def help_embed() -> discord.Embed:
             "/league add - Add a new league\n"
             "/league delete - Delete a league\n"
             "/league recruit - Post recruitment message\n"
-            "/ring-add - Grant rings\n"
-            "/award - Give awards"
+            "/ring-add / /ring-remove - Grant or remove rings\n"
+            "/award / /award-remove - Give or remove awards\n"
+            "/say - Send a message as the bot\n"
+            "/activitycheck - Activity check (posts results when it ends)"
         ),
         inline=False,
     )
@@ -142,7 +162,8 @@ def help_embed() -> discord.Embed:
             "/depthchart add - Add a player to depth chart\n"
             "/depthchart remove - Remove a player from depth chart\n"
             "/depthchart promote - Promote a player up the depth chart\n"
-            "/depthchart demote - Demote a player down the depth chart"
+            "/depthchart demote - Demote a player down the depth chart\n"
+            "/depthchart post - Display a depth chart"
         ),
         inline=False,
     )
@@ -151,8 +172,7 @@ def help_embed() -> discord.Embed:
         value=(
             "/contract add - Add a player contract\n"
             "/contract remove - Remove a player contract\n"
-            "/contract post - Post all active contracts\n"
-            "/activitycheck - Set activity check"
+            "/contract post - Post all active contracts"
         ),
         inline=False,
     )
@@ -170,3 +190,32 @@ def help_embed() -> discord.Embed:
     )
     embed.set_footer(text="TeamCore • By Korvert")
     return embed
+
+
+def help_embed_v2() -> discord.Embed:
+    """Second help page: the server-management toolkit."""
+    e = discord.Embed(title="TeamCore Commands — Server Tools", description="Page 2 of 2", color=COLORS["primary"])
+    e.add_field(name="🏆 Records & Leaderboards", value=(
+        "/record create|delete|edit|rename|reset - Manage teams (Manager)\n"
+        "/record win|loss|tie - Add a result (Manager)\n"
+        "/record view|list|history - View records\n"
+        "/leaderboard teams - Ranked teams (paginated)\n"
+        "/leaderboard post - Live leaderboard that auto-updates (Manager)"), inline=False)
+    e.add_field(name="📊 Stats Channels (Admin)", value=(
+        "/stats setup - Create member + boost channels\n"
+        "/stats add|remove|config|update - Manage stat channels, incl. per-team records"), inline=False)
+    e.add_field(name="🛡️ Moderation", value=(
+        "/lock, /unlock - Lock a channel (or `server_wide`) and restore it exactly\n"
+        "/backup create|list|view|restore|delete - Save/restore roles + channels (Admin)"), inline=False)
+    e.add_field(name="🎉 Community", value=(
+        "/poll create|end|results - Polls (anonymous / multi-choice)\n"
+        "/giveaway create|end|reroll|list|history - Giveaways\n"
+        "/countdown create|edit|delete|list - Countdowns\n"
+        "/suggestion approve|deny|channel|history - Manage suggestions\n"
+        "/activity config|leaderboard - Activity tracking (Manager)\n"
+        "/memberstats history|channel - Growth history"), inline=False)
+    e.add_field(name="🧰 Builders (Manager)", value=(
+        "/embed create|edit - Interactive embed builder\n"
+        "/rolepanel create|add|remove|delete - Button/dropdown role panels\n"
+        "/announcement send|channel - Announcements with preview"), inline=False)
+    return e

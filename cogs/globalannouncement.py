@@ -4,9 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import database as db
-
-# Only this user can send global announcements
-GLOBAL_ADMIN_ID = 1374932337917165702
+from config import OWNER_ID as GLOBAL_ADMIN_ID  # only this user can send global announcements
 
 CHANNEL_NAME = "teamcore-global"
 
@@ -24,7 +22,7 @@ class GlobalAnnouncement(commands.Cog):
         description="[TeamCore Admin] Send a global message to all servers"
     )
     @app_commands.describe(message="The announcement message to send to all servers")
-    async def globalannouncement(self, interaction: discord.Interaction, message: str):
+    async def globalannouncement(self, interaction: discord.Interaction, message: app_commands.Range[str, 1, 4000]):
         # Only the designated global admin can use this
         if interaction.user.id != GLOBAL_ADMIN_ID:
             return await interaction.response.send_message(
@@ -36,6 +34,7 @@ class GlobalAnnouncement(commands.Cog):
 
         success = 0
         failed = 0
+        dmed = 0
 
         for guild in self.bot.guilds:
             try:
@@ -107,12 +106,36 @@ class GlobalAnnouncement(commands.Cog):
                 )
                 success += 1
 
+                # Also DM the owner directly, unless they've opted out via /disableglobalmessages
+                if not pings_disabled:
+                    owner = guild.owner
+                    if owner is None and guild.owner_id:
+                        try:
+                            owner = await self.bot.fetch_user(guild.owner_id)
+                        except (discord.NotFound, discord.HTTPException):
+                            owner = None
+                    if owner:
+                        try:
+                            dm_embed = discord.Embed(
+                                title="📢 TeamCore Global Announcement",
+                                description=message,
+                                color=0x5865F2
+                            )
+                            dm_embed.set_footer(text=f"TeamCore Bot • Sent because you own {guild.name}")
+                            await owner.send(
+                                content="*Do `/disableglobalmessages` in your server to stop these DMs*",
+                                embed=dm_embed
+                            )
+                            dmed += 1
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass  # owner has DMs closed or blocked the bot — not a failure of the announcement itself
+
             except Exception as e:
                 print(f"❌ Global announcement failed for {guild.name}: {e}")
                 failed += 1
 
         await interaction.followup.send(
-            f"✅ Announcement sent!\n📊 Success: **{success}** servers\n❌ Failed: **{failed}** servers",
+            f"✅ Announcement sent!\n📊 Success: **{success}** servers\n📬 Owners DMed: **{dmed}**\n❌ Failed: **{failed}** servers",
             ephemeral=True
         )
 

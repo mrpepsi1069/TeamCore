@@ -3,6 +3,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from config import INVITE_PERMISSIONS
 
 
 class Invite(commands.Cog):
@@ -13,7 +14,7 @@ class Invite(commands.Cog):
     async def invite(self, interaction: discord.Interaction):
         link = (
             f"https://discord.com/api/oauth2/authorize"
-            f"?client_id={self.bot.user.id}&permissions=8&scope=bot%20applications.commands"
+            f"?client_id={self.bot.user.id}&permissions={INVITE_PERMISSIONS}&scope=bot%20applications.commands"
         )
         embed = discord.Embed(
             title="📨 Invite TeamCore Bot",

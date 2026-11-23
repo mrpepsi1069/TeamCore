@@ -14,10 +14,22 @@ def _fmt_uptime(seconds: float) -> str:
     return f"{s // 86400}d {(s % 86400) // 3600}h {(s % 3600) // 60}m"
 
 
+def _peak_memory_mb() -> str:
+    """Peak RSS. The `resource` module is Unix-only, so don't crash on Windows."""
+    try:
+        import resource
+        import sys
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux reports kilobytes, macOS reports bytes
+        return f"{peak / (1024 * 1024 if sys.platform == 'darwin' else 1024):.1f} MB"
+    except Exception:
+        return "N/A"
+
+
 class BotStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._start = time.time()
+        self._start = getattr(bot, "start_time", time.time())
 
     @app_commands.command(name="botstats", description="View global bot statistics (Owner only)")
     async def botstats(self, interaction: discord.Interaction):
@@ -35,8 +47,7 @@ class BotStats(commands.Cog):
         embed.add_field(name="Total Users", value=str(stats["total_users"]), inline=True)
         embed.add_field(name="Commands Used", value=str(stats["total_commands_used"]), inline=True)
         embed.add_field(name="Uptime", value=_fmt_uptime(time.time() - self._start), inline=True)
-        mem = __import__("resource").getrusage(__import__("resource").RUSAGE_SELF).ru_maxrss
-        embed.add_field(name="Memory", value=f"{mem / 1024:.1f} MB", inline=True)
+        embed.add_field(name="Memory", value=_peak_memory_mb(), inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 

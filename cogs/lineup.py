@@ -33,6 +33,10 @@ class Lineup(commands.Cog):
                 embed=error_embed("Permission Denied", "You need Manager role or higher."), ephemeral=True
             )
         name = sanitize_input(name, 50)
+        if not name:
+            return await interaction.response.send_message(
+                embed=error_embed("Invalid Name", "The lineup name can't be empty."), ephemeral=True
+            )
         try:
             await db.create_lineup(str(interaction.guild_id), name, sanitize_input(description, 200), str(interaction.user.id))
             await interaction.response.send_message(
@@ -76,9 +80,13 @@ class Lineup(commands.Cog):
             return await interaction.response.send_message(
                 embed=error_embed("Not Found", f"Lineup **{name}** does not exist."), ephemeral=True
             )
+        if not any(p["user_id"] == str(player.id) for p in lu.get("players", [])):
+            return await interaction.response.send_message(
+                embed=error_embed("Not In Lineup", f"{player.mention} isn't in **{lu['lineup_name']}**."), ephemeral=True
+            )
         await db.remove_player_from_lineup(lu["_id"], str(player.id))
         await interaction.response.send_message(
-            embed=success_embed("Player Removed", f"Removed {player.mention} from **{name}**")
+            embed=success_embed("Player Removed", f"Removed {player.mention} from **{lu['lineup_name']}**")
         )
 
     @group.command(name="edit", description="Edit a player's position in a lineup")
@@ -93,6 +101,11 @@ class Lineup(commands.Cog):
         if not lu:
             return await interaction.response.send_message(
                 embed=error_embed("Not Found", f"Lineup **{name}** does not exist."), ephemeral=True
+            )
+        if not any(p["user_id"] == str(player.id) for p in lu.get("players", [])):
+            return await interaction.response.send_message(
+                embed=error_embed("Not In Lineup", f"{player.mention} isn't in **{lu['lineup_name']}**. Use `/lineup add` first."),
+                ephemeral=True,
             )
         pos = sanitize_input(position, 50).upper()
         await db.add_player_to_lineup(lu["_id"], str(player.id), pos)
@@ -137,9 +150,9 @@ class Lineup(commands.Cog):
             return await interaction.response.send_message(
                 embed=error_embed("Not Found", f"Lineup **{name}** does not exist."), ephemeral=True
             )
-        await db.delete_lineup(str(interaction.guild_id), name)
+        await db.delete_lineup(str(interaction.guild_id), lu["lineup_name"])
         await interaction.response.send_message(
-            embed=success_embed("Lineup Deleted", f"Deleted **{name}**")
+            embed=success_embed("Lineup Deleted", f"Deleted **{lu['lineup_name']}**")
         )
 
     @group.command(name="post", description="Post a lineup to a channel")
@@ -156,9 +169,18 @@ class Lineup(commands.Cog):
                 embed=error_embed("Not Found", f"Lineup **{name}** does not exist."), ephemeral=True
             )
         target = channel or interaction.channel
-        await target.send(embed=lineup_embed(lu))
+        if not target.permissions_for(interaction.user).send_messages:
+            return await interaction.response.send_message(
+                embed=error_embed("Permission Denied", f"You can't send messages in {target.mention}."), ephemeral=True
+            )
+        try:
+            await target.send(embed=lineup_embed(lu))
+        except discord.Forbidden:
+            return await interaction.response.send_message(
+                embed=error_embed("Missing Permissions", f"I can't send messages in {target.mention}."), ephemeral=True
+            )
         await interaction.response.send_message(
-            embed=success_embed("Posted", f"Posted **{name}** to {target.mention}"), ephemeral=True
+            embed=success_embed("Posted", f"Posted **{lu['lineup_name']}** to {target.mention}"), ephemeral=True
         )
 
 

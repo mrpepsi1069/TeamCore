@@ -80,28 +80,35 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
 # DROPDOWNS
 # ─────────────────────────────────────────────
 
+async def _refresh_panel(panel: "SetupView") -> None:
+    """Redraw the main /setup panel (the message the owner is actually looking at)."""
+    if panel.parent_interaction is None:
+        return
+    try:
+        embed = await build_status_embed(str(panel.parent_interaction.guild_id))
+        await panel.parent_interaction.edit_original_response(embed=embed, view=panel)
+    except discord.HTTPException:
+        pass  # panel expired / was dismissed — the setting itself is already saved
+
+
 class RoleSelect(discord.ui.RoleSelect):
-    def __init__(self, key: str, label: str):
-        super().__init__(
-            placeholder=f"Select {label}",
-            min_values=1,
-            max_values=1
-        )
+    def __init__(self, key: str, label: str, panel: "SetupView"):
+        super().__init__(placeholder=f"Select {label}", min_values=1, max_values=1)
         self.key = key
-        self.label = label
+        self.label_text = label
+        self.panel = panel
 
     async def callback(self, interaction: discord.Interaction):
         role = self.values[0]
         await db.set_guild_config(str(interaction.guild_id), {self.key: role.id})
-
-        embed = await build_status_embed(str(interaction.guild_id))
-        new_view = SetupView()
-        await interaction.response.edit_message(embed=embed, view=new_view)
-        new_view.message = interaction.message
+        # This select lives in its own little ephemeral message. The old code redrew a
+        # whole second setup panel *inside it* and left the real panel stale.
+        await interaction.response.edit_message(content=f"✅ **{self.label_text}** set to {role.mention}.", view=None)
+        await _refresh_panel(self.panel)
 
 
 class ChannelSelect(discord.ui.ChannelSelect):
-    def __init__(self, key: str, label: str):
+    def __init__(self, key: str, label: str, panel: "SetupView"):
         super().__init__(
             placeholder=f"Select {label}",
             min_values=1,
@@ -109,16 +116,14 @@ class ChannelSelect(discord.ui.ChannelSelect):
             channel_types=[discord.ChannelType.text, discord.ChannelType.news]
         )
         self.key = key
-        self.label = label
+        self.label_text = label
+        self.panel = panel
 
     async def callback(self, interaction: discord.Interaction):
         channel = self.values[0]
         await db.set_guild_config(str(interaction.guild_id), {self.key: channel.id})
-
-        embed = await build_status_embed(str(interaction.guild_id))
-        new_view = SetupView()
-        await interaction.response.edit_message(embed=embed, view=new_view)
-        new_view.message = interaction.message
+        await interaction.response.edit_message(content=f"✅ **{self.label_text}** set to {channel.mention}.", view=None)
+        await _refresh_panel(self.panel)
 
 
 # ─────────────────────────────────────────────
@@ -126,12 +131,20 @@ class ChannelSelect(discord.ui.ChannelSelect):
 # ─────────────────────────────────────────────
 
 class SetupView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
+    def __init__(self, owner_id: int, parent_interaction: discord.Interaction | None = None):
+        super().__init__(timeout=600)
+        self.owner_id = owner_id
+        self.parent_interaction = parent_interaction
         self.message: discord.Message | None = None
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ Only the server owner can use setup.", ephemeral=True)
+            return False
+        return True
+
     async def send_select(self, interaction, select):
-        view = discord.ui.View()
+        view = discord.ui.View(timeout=120)
         view.add_item(select)
 
         await interaction.response.send_message(
@@ -144,53 +157,53 @@ class SetupView(discord.ui.View):
 
     @discord.ui.button(label="Assistant Coach", style=discord.ButtonStyle.secondary, emoji="🏈", row=0)
     async def set_ac(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, RoleSelect("assistant_coach_role", "Assistant Coach"))
+        await self.send_select(interaction, RoleSelect("assistant_coach_role", "Assistant Coach", self))
 
     @discord.ui.button(label="Head Coach", style=discord.ButtonStyle.secondary, emoji="🏈", row=0)
     async def set_hc(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, RoleSelect("head_coach_role", "Head Coach"))
+        await self.send_select(interaction, RoleSelect("head_coach_role", "Head Coach", self))
 
     @discord.ui.button(label="General Manager", style=discord.ButtonStyle.secondary, emoji="💼", row=0)
     async def set_gm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, RoleSelect("general_manager_role", "General Manager"))
+        await self.send_select(interaction, RoleSelect("general_manager_role", "General Manager", self))
 
     @discord.ui.button(label="Franchise Owner", style=discord.ButtonStyle.secondary, emoji="👑", row=1)
     async def set_fo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, RoleSelect("franchise_owner_role", "Franchise Owner"))
+        await self.send_select(interaction, RoleSelect("franchise_owner_role", "Franchise Owner", self))
 
     @discord.ui.button(label="Admin", style=discord.ButtonStyle.secondary, emoji="🛡️", row=1)
     async def set_admin(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, RoleSelect("admin_role", "Admin"))
+        await self.send_select(interaction, RoleSelect("admin_role", "Admin", self))
 
     # CHANNEL BUTTONS
 
     @discord.ui.button(label="Log Channel", style=discord.ButtonStyle.primary, emoji="📋", row=2)
     async def set_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("log_channel", "Log Channel"))
+        await self.send_select(interaction, ChannelSelect("log_channel", "Log Channel", self))
 
     @discord.ui.button(label="Announcements", style=discord.ButtonStyle.primary, emoji="📢", row=2)
     async def set_announce(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("announce_channel", "Announcements Channel"))
+        await self.send_select(interaction, ChannelSelect("announce_channel", "Announcements Channel", self))
 
     @discord.ui.button(label="Gametime Channel", style=discord.ButtonStyle.primary, emoji="⏰", row=2)
     async def set_gametime(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("gametime_channel", "Gametime Channel"))
+        await self.send_select(interaction, ChannelSelect("gametime_channel", "Gametime Channel", self))
 
     @discord.ui.button(label="Matchmaking Channel", style=discord.ButtonStyle.primary, emoji="🎮", row=2)
     async def set_matchmaking(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("matchmaking_channel", "Matchmaking Channel"))
+        await self.send_select(interaction, ChannelSelect("matchmaking_channel", "Matchmaking Channel", self))
 
     @discord.ui.button(label="Contract Channel", style=discord.ButtonStyle.primary, emoji="📜", row=2)
     async def set_contract(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("contract_channel", "Contract Channel"))
+        await self.send_select(interaction, ChannelSelect("contract_channel", "Contract Channel", self))
 
     @discord.ui.button(label="Awards Channel", style=discord.ButtonStyle.primary, emoji="🏆", row=3)
     async def set_awards(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("awards_channel", "Awards Channel"))
+        await self.send_select(interaction, ChannelSelect("awards_channel", "Awards Channel", self))
 
     @discord.ui.button(label="League Log Channel", style=discord.ButtonStyle.primary, emoji="🏈", row=3)
     async def set_league_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_select(interaction, ChannelSelect("league_log_channel", "League Log Channel"))
+        await self.send_select(interaction, ChannelSelect("league_log_channel", "League Log Channel", self))
 
     # RESET
 
@@ -231,7 +244,7 @@ class Setup(commands.Cog):
             )
 
         embed = await build_status_embed(str(interaction.guild_id))
-        view = SetupView()
+        view = SetupView(interaction.user.id, interaction)
         await interaction.response.send_message(
             embed=embed,
             view=view,

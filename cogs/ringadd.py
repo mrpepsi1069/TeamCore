@@ -14,19 +14,28 @@ class RingAdd(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _league_autocomplete(self, interaction: discord.Interaction, current: str):
+        leagues = await db.get_leagues(str(interaction.guild_id))
+        return [
+            app_commands.Choice(name=f"{l['league_abbr']} - {l['league_name']}", value=l["league_abbr"])
+            for l in leagues
+            if current.lower() in l["league_abbr"].lower() or current.lower() in l["league_name"].lower()
+        ][:25]
+
     @app_commands.command(name="ring-add", description="Grant championship rings to players")
     @app_commands.describe(
         league="League abbreviation", season="Season (e.g., S1)", opponent="Team you beat in the finals",
         player1="Player 1", player2="Player 2", player3="Player 3", player4="Player 4", player5="Player 5",
         player6="Player 6", player7="Player 7", player8="Player 8", player9="Player 9", player10="Player 10",
     )
+    @app_commands.autocomplete(league=_league_autocomplete)
     async def ring_add(
         self,
         interaction: discord.Interaction,
         league: str,
         season: str,
         player1: discord.Member,
-        opponent: str = None,
+        opponent: Optional[str] = None,
         player2: Optional[discord.Member] = None,
         player3: Optional[discord.Member] = None,
         player4: Optional[discord.Member] = None,
@@ -59,7 +68,13 @@ class RingAdd(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        players = [p for p in [player1, player2, player3, player4, player5, player6, player7, player8, player9, player10] if p]
+        # De-duplicate: picking the same person in two slots used to report a bogus "already has ring"
+        players, seen = [], set()
+        for p in [player1, player2, player3, player4, player5, player6, player7, player8, player9, player10]:
+            if p and p.id not in seen:
+                seen.add(p.id)
+                players.append(p)
+
         results = []
         for p in players:
             await db.create_or_update_user(str(p.id), p.name)
@@ -86,7 +101,33 @@ class RingAdd(commands.Cog):
                 pass
 
         await interaction.followup.send(
-            embed=success_embed("Rings Granted", f"Granted rings to **{len(players)}** player(s)!\n\n" + "\n".join(results)),
+            embed=success_embed("Rings Granted", f"Processed **{len(players)}** player(s):\n\n" + "\n".join(results)),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="ring-remove", description="Remove a championship ring from a player (fix a mistake)")
+    @app_commands.describe(league="League abbreviation", season="Season the ring was for", member="Player to remove it from")
+    @app_commands.autocomplete(league=_league_autocomplete)
+    async def ring_remove(self, interaction: discord.Interaction, league: str, season: str, member: discord.User):
+        if not await has_manager_perms(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "You need Manager role or higher."), ephemeral=True
+            )
+        league_abbr = league.upper()
+        league_doc = await db.get_league_by_abbr(str(interaction.guild_id), league_abbr)
+        if not league_doc:
+            return await interaction.response.send_message(
+                embed=error_embed("League Not Found", f"No league with abbreviation **{league_abbr}**."), ephemeral=True
+            )
+        removed = await db.remove_championship_ring(
+            interaction.guild_id, league_doc["_id"], member.id, sanitize_input(season, 20)
+        )
+        if not removed:
+            return await interaction.response.send_message(
+                embed=error_embed("Not Found", f"{member.mention} has no {league_abbr} ring for {season}."), ephemeral=True
+            )
+        await interaction.response.send_message(
+            embed=success_embed("Ring Removed", f"Removed the **{league_abbr} {season}** ring from {member.mention}."),
             ephemeral=True,
         )
 

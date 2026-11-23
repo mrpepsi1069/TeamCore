@@ -10,47 +10,156 @@ _client: AsyncIOMotorClient | None = None
 _db = None
 
 
-async def initialize() -> None:
+async def initialize() -> bool:
+    """Connect to MongoDB. Returns True on success.
+
+    On failure `_db` is reset to None so every helper below degrades cleanly
+    (and the bot can tell users the database is unavailable) instead of each
+    call blocking for the full server-selection timeout and then raising.
+    """
     global _client, _db
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        print("❌ DATABASE_URL is not set")
+        print("⚠️  Continuing without database")
+        _client = _db = None
+        return False
+
+    kwargs = {"tz_aware": True, "serverSelectionTimeoutMS": 5000}
+    # Only relax certificate validation if explicitly asked to (e.g. a host with a
+    # broken CA bundle). The old code always disabled it, which allows MITM attacks.
+    if os.getenv("MONGO_ALLOW_INVALID_CERTS", "").lower() in ("1", "true", "yes"):
+        kwargs.update(tls=True, tlsAllowInvalidCertificates=True)
+        print("⚠️  MONGO_ALLOW_INVALID_CERTS is on — TLS certificates are NOT being verified")
+
     try:
-        _client = AsyncIOMotorClient(
-            os.getenv("DATABASE_URL"),
-            tls=True,
-            tlsAllowInvalidCertificates=True,
-            serverSelectionTimeoutMS=5000,
-        )
-        _db = _client["lockerroom_bot"]
-        await _create_indexes()
-        print("✅ MongoDB connected")
+        client = AsyncIOMotorClient(url, **kwargs)
+        await client.admin.command("ping")  # Motor connects lazily; force a real round-trip
     except Exception as e:
         print(f"❌ MongoDB connection failed: {e}")
         print("⚠️  Continuing without database")
+        _client = _db = None
+        return False
+
+    _client = client
+    _db = client["lockerroom_bot"]
+    await _create_indexes()
+    try:
+        await run_migrations()
+    except Exception as e:
+        print(f"⚠️ Migration error: {e}")
+    print("✅ MongoDB connected")
+    return True
+
+
+async def _safe_index(collection, keys, **kwargs) -> None:
+    """Create one index; a failure (e.g. pre-existing duplicate data) must not
+    prevent the remaining indexes from being created."""
+    try:
+        await collection.create_index(keys, **kwargs)
+    except Exception as e:
+        print(f"⚠️  Could not create index on {collection.name} {keys}: {e}")
 
 
 async def _create_indexes() -> None:
     if _db is None:
         return
-    await _db.guilds.create_index("guild_id", unique=True)
-    await _db.leagues.create_index([("guild_id", 1), ("league_abbr", 1)], unique=True)
-    await _db.lineups.create_index([("guild_id", 1), ("lineup_name", 1)], unique=True)
-    await _db.users.create_index("user_id", unique=True)
-    await _db.championship_rings.create_index(
-        [("guild_id", 1), ("league_id", 1), ("user_id", 1), ("season", 1)], unique=True
+    await _safe_index(_db.guilds, "guild_id", unique=True)
+    await _safe_index(_db.leagues, [("guild_id", 1), ("league_abbr", 1)], unique=True)
+    await _safe_index(_db.lineups, [("guild_id", 1), ("lineup_name", 1)], unique=True)
+    await _safe_index(_db.users, "user_id", unique=True)
+    await _safe_index(
+        _db.championship_rings,
+        [("guild_id", 1), ("league_id", 1), ("user_id", 1), ("season", 1)], unique=True,
     )
-    await _db.awards.create_index(
+    await _safe_index(
+        _db.awards,
         [("guild_id", 1), ("league_id", 1), ("user_id", 1), ("award_name", 1), ("season", 1)],
         unique=True,
     )
-    await _db.gametime_rsvps.create_index("messageId", unique=True)
-    await _db.depth_charts.create_index([("guildId", 1), ("abbreviation", 1)], unique=True)
-    await _db.contracts.create_index([("guildId", 1), ("userId", 1)], unique=True)
-    await _db.matchmaking_queue.create_index([("guild_id", 1), ("game", 1), ("size", 1)])
-    await _db.matchmaking_queue.create_index([("guild_id", 1), ("user_id", 1)])
-    await _db.matchmaking_queue.create_index("created_at")
+    await _safe_index(_db.gametimes, "message_id")
+    await _safe_index(_db.depth_charts, [("guildId", 1), ("abbreviation", 1)], unique=True)
+    await _safe_index(_db.contracts, [("guildId", 1), ("userId", 1)], unique=True)
+    await _safe_index(_db.contracts, "messageId")
+    await _safe_index(_db.activity_checks, [("is_active", 1), ("expires_at", 1)])
+    # Matchmaking is pooled across every server, so these are NOT keyed by guild.
+    await _safe_index(_db.matchmaking_queue, [("game", 1), ("size", 1), ("created_at", 1)])
+    await _safe_index(_db.matchmaking_queue, "user_id")
+    await _safe_index(_db.matchmaking_queue, "created_at")
 
 
 def _check() -> bool:
     return _db is not None
+
+
+def is_connected() -> bool:
+    """True if a database connection is available."""
+    return _db is not None
+
+
+def col(name: str):
+    """Collection accessor for the feature modules (None when the DB is down)."""
+    return _db[name] if _db is not None else None
+
+
+async def next_seq(guild_id, name: str) -> int:
+    """Per-server auto-increment counter (poll #1, giveaway #1, ...). Atomic across processes."""
+    if _db is None:
+        raise RuntimeError("database unavailable")
+    from pymongo import ReturnDocument
+    doc = await _db.counters.find_one_and_update(
+        {"_id": f"{guild_id}:{name}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=ReturnDocument.AFTER
+    )
+    return int(doc["seq"])
+
+
+# ── Schema migrations ───────────────────────────────────────────────────────
+# Append new (version, coroutine) pairs here; each runs exactly once per database, in order.
+# The applied version is stored in meta/_id="schema".
+
+async def _migration_1_feature_indexes() -> None:
+    """Indexes for records, stats, polls, giveaways, countdowns, activity, role panels, backups,
+    member stats and suggestions. Every collection is keyed by guild_id so servers stay isolated."""
+    I = _safe_index
+    await I(_db.teams, [("guild_id", 1), ("name_lower", 1)], unique=True)
+    await I(_db.team_history, [("guild_id", 1), ("team_id", 1), ("timestamp", -1)])
+    await I(_db.leaderboard_panels, [("guild_id", 1), ("message_id", 1)], unique=True)
+    await I(_db.stats_channels, [("guild_id", 1), ("key", 1)], unique=True)
+    await I(_db.channel_locks, [("guild_id", 1), ("channel_id", 1)], unique=True)
+    await I(_db.polls, [("guild_id", 1), ("poll_id", 1)], unique=True)
+    await I(_db.polls, [("status", 1), ("ends_at", 1)])
+    await I(_db.poll_votes, [("guild_id", 1), ("poll_id", 1), ("user_id", 1)], unique=True)
+    await I(_db.giveaways, [("guild_id", 1), ("giveaway_id", 1)], unique=True)
+    await I(_db.giveaways, [("status", 1), ("ends_at", 1)])
+    await I(_db.giveaway_entries, [("guild_id", 1), ("giveaway_id", 1), ("user_id", 1)], unique=True)
+    await I(_db.countdowns, [("guild_id", 1), ("countdown_id", 1)], unique=True)
+    await I(_db.countdowns, [("status", 1), ("ends_at", 1)])
+    await I(_db.activity_daily, [("guild_id", 1), ("user_id", 1), ("date", 1)], unique=True)
+    await I(_db.activity_daily, [("guild_id", 1), ("date", 1)])
+    await I(_db.role_panels, [("guild_id", 1), ("panel_id", 1)], unique=True)
+    await I(_db.announcements, [("guild_id", 1), ("announcement_id", 1)], unique=True)
+    await I(_db.backups, [("guild_id", 1), ("name_lower", 1)], unique=True)
+    await I(_db.member_daily, [("guild_id", 1), ("date", 1)], unique=True)
+    await I(_db.member_snapshots, [("guild_id", 1), ("date", 1)], unique=True)
+    await I(_db.suggestions, [("guild_id", 1), ("suggestion_id", 1)], unique=True)
+    await I(_db.suggestion_votes, [("guild_id", 1), ("suggestion_id", 1), ("user_id", 1)], unique=True)
+
+
+_MIGRATIONS = [
+    (1, _migration_1_feature_indexes),
+]
+
+
+async def run_migrations() -> None:
+    if _db is None:
+        return
+    meta = await _db.meta.find_one({"_id": "schema"}) or {}
+    current = int(meta.get("version", 0))
+    for version, fn in _MIGRATIONS:
+        if version > current:
+            await fn()
+            await _db.meta.update_one({"_id": "schema"}, {"$set": {"version": version}}, upsert=True)
+            print(f"✅ Applied database migration {version}")
 
 
 # ──────────────────────────────────────────────
@@ -272,20 +381,58 @@ async def get_user_awards(guild_id: str, user_id: str):
     if not user:
         return None
 
-    pipeline_rings = [
-        {"$match": {"guild_id": guild_id, "user_id": user_id}},
-        {"$lookup": {"from": "leagues", "localField": "league_id", "foreignField": "_id", "as": "league_info"}},
-        {"$project": {"league": {"$arrayElemAt": ["$league_info.league_name", 0]}, "season": 1, "opponent": 1}},
-    ]
-    pipeline_awards = [
-        {"$match": {"guild_id": guild_id, "user_id": user_id}},
-        {"$lookup": {"from": "leagues", "localField": "league_id", "foreignField": "_id", "as": "league_info"}},
-        {"$project": {"league": {"$arrayElemAt": ["$league_info.league_name", 0]}, "award": "$award_name", "season": 1}},
-    ]
+    # league_id is stored as a *string*, but leagues._id is an ObjectId, so a
+    # $lookup on them never matched and every league showed up as "Unknown".
+    # Resolve the names in Python instead.
+    leagues = await _db.leagues.find({"guild_id": guild_id}).to_list(None)
+    league_names = {str(l["_id"]): l["league_name"] for l in leagues}
 
-    rings = await _db.championship_rings.aggregate(pipeline_rings).to_list(None)
-    awards = await _db.awards.aggregate(pipeline_awards).to_list(None)
+    rings_raw = await _db.championship_rings.find({"guild_id": guild_id, "user_id": user_id}).to_list(None)
+    awards_raw = await _db.awards.find({"guild_id": guild_id, "user_id": user_id}).to_list(None)
+
+    rings = [
+        {"league": league_names.get(str(r.get("league_id"))), "season": r.get("season"), "opponent": r.get("opponent")}
+        for r in rings_raw
+    ]
+    awards = [
+        {"league": league_names.get(str(r.get("league_id"))), "award": r.get("award_name"), "season": r.get("season")}
+        for r in awards_raw
+    ]
     return {"username": user["username"], "rings": rings, "awards": awards}
+
+
+async def remove_award(guild_id, league_id, user_id, award_name, season) -> bool:
+    if not _check():
+        return False
+    r = await _db.awards.delete_one({
+        "guild_id": str(guild_id), "league_id": str(league_id), "user_id": str(user_id),
+        "award_name": str(award_name), "season": str(season),
+    })
+    return r.deleted_count > 0
+
+
+async def remove_championship_ring(guild_id, league_id, user_id, season) -> bool:
+    if not _check():
+        return False
+    r = await _db.championship_rings.delete_one({
+        "guild_id": str(guild_id), "league_id": str(league_id),
+        "user_id": str(user_id), "season": str(season),
+    })
+    return r.deleted_count > 0
+
+
+async def get_leaderboard(guild_id: str, kind: str = "rings", limit: int = 10) -> list:
+    """Top players in a server by championship rings or individual awards."""
+    if not _check():
+        return []
+    coll = _db.championship_rings if kind == "rings" else _db.awards
+    pipeline = [
+        {"$match": {"guild_id": guild_id}},
+        {"$group": {"_id": "$user_id", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1, "_id": 1}},
+        {"$limit": limit},
+    ]
+    return await coll.aggregate(pipeline).to_list(None)
 
 
 # ──────────────────────────────────────────────
@@ -385,16 +532,28 @@ async def get_gametime_by_message_id(message_id: str):
 # ACTIVITY CHECKS
 # ──────────────────────────────────────────────
 
-async def create_activity_check(guild_id, message_id, channel_id, expires_at, created_by):
+async def create_activity_check(guild_id, message_id, channel_id, expires_at, created_by, role_id=None):
     if not _check():
         return None
     doc = {
         "guild_id": guild_id, "message_id": message_id,
         "channel_id": channel_id, "expires_at": expires_at,
-        "created_by": created_by, "is_active": True, "responses": [],
+        "created_by": created_by, "role_id": role_id, "is_active": True, "responses": [],
     }
     r = await _db.activity_checks.insert_one(doc)
     return {**doc, "_id": r.inserted_id}
+
+
+async def get_due_activity_checks(now: datetime) -> list:
+    if not _check():
+        return []
+    return await _db.activity_checks.find({"is_active": True, "expires_at": {"$lte": now}}).to_list(None)
+
+
+async def close_activity_check(check_id) -> None:
+    if not _check():
+        return
+    await _db.activity_checks.update_one({"_id": ObjectId(str(check_id))}, {"$set": {"is_active": False}})
 
 
 # ──────────────────────────────────────────────
@@ -417,7 +576,8 @@ async def log_command(command_name: str, guild_id: str, user_id: str) -> None:
     if not _check():
         return
     await _db.command_usage.insert_one(
-        {"command_name": command_name, "guild_id": guild_id, "user_id": user_id}
+        {"command_name": command_name, "guild_id": guild_id, "user_id": user_id,
+         "timestamp": datetime.now(timezone.utc)}
     )
 
 
@@ -466,11 +626,13 @@ async def delete_depth_chart(guild_id: str, abbreviation: str) -> bool:
 async def add_player_to_depth_chart(guild_id: str, abbreviation: str, user_id: str) -> bool:
     if not _check():
         return False
-    await _db.depth_charts.update_one(
-        {"guildId": guild_id, "abbreviation": abbreviation.upper()},
+    # The filter makes this atomic: two simultaneous /depthchart add calls can't
+    # both pass the cog's "already added?" check and insert the same player twice.
+    r = await _db.depth_charts.update_one(
+        {"guildId": guild_id, "abbreviation": abbreviation.upper(), "players.userId": {"$ne": user_id}},
         {"$push": {"players": {"userId": user_id}}},
     )
-    return True
+    return r.modified_count > 0
 
 
 async def remove_player_from_depth_chart(guild_id: str, abbreviation: str, user_id: str) -> bool:
@@ -490,6 +652,8 @@ async def swap_depth_chart_players(guild_id: str, abbreviation: str, i1: int, i2
     if not dc:
         raise ValueError("Depth chart not found")
     players = list(dc["players"])
+    if not (0 <= i1 < len(players) and 0 <= i2 < len(players)):
+        return False
     players[i1], players[i2] = players[i2], players[i1]
     await _db.depth_charts.update_one(
         {"guildId": guild_id, "abbreviation": abbreviation.upper()},
@@ -572,60 +736,68 @@ async def set_global_pings_disabled(guild_id: str, disabled: bool) -> None:
 
 
 # ──────────────────────────────────────────────
-# MATCHMAKING
+# MATCHMAKING (pooled across every server the bot is in)
 # ──────────────────────────────────────────────
 
 async def create_matchmaking_request(
-    guild_id: str, user_id: str, game: str, size: str, time_text: str,
-    channel_id: str = None, message_id: str = None,
+    guild_id: str, guild_name: str, user_id: str, game: str, size: str, time_text: str,
+    postings: list | None = None,
 ):
     if not _check():
         return None
     doc = {
         "guild_id": guild_id,
+        "guild_name": guild_name,
         "user_id": user_id,
         "game": game,
         "size": size,
         "time_text": time_text,
-        "channel_id": channel_id,
-        "message_id": message_id,
+        "postings": postings or [],  # [{guild_id, channel_id, message_id}, ...]
         "created_at": datetime.now(timezone.utc),
     }
     r = await _db.matchmaking_queue.insert_one(doc)
     return {**doc, "_id": r.inserted_id}
 
 
-async def get_user_matchmaking_request(guild_id: str, user_id: str, game: str, size: str):
-    """Check if this user already has a pending request for this exact game+size."""
+async def get_user_matchmaking_request(user_id: str, game: str, size: str):
+    """This user's pending request for this exact game + size (anywhere), if any."""
+    if not _check():
+        return None
+    return await _db.matchmaking_queue.find_one({"user_id": user_id, "game": game, "size": size})
+
+
+async def find_matchmaking_opponent(game: str, size: str, exclude_user_id: str):
+    """Oldest waiting request for this game + size from someone else (read-only)."""
     if not _check():
         return None
     return await _db.matchmaking_queue.find_one(
-        {"guild_id": guild_id, "user_id": user_id, "game": game, "size": size}
-    )
-
-
-async def find_matchmaking_opponent(guild_id: str, game: str, size: str, exclude_user_id: str):
-    """Find the oldest waiting request for this game+size from someone else."""
-    if not _check():
-        return None
-    return await _db.matchmaking_queue.find_one(
-        {"guild_id": guild_id, "game": game, "size": size, "user_id": {"$ne": exclude_user_id}},
+        {"game": game, "size": size, "user_id": {"$ne": exclude_user_id}},
         sort=[("created_at", 1)],
     )
 
 
-async def update_matchmaking_request(
-    request_id, time_text: str = None, channel_id: str = None, message_id: str = None,
-) -> None:
+async def claim_matchmaking_opponent(game: str, size: str, exclude_user_id: str):
+    """Atomically find AND remove the oldest waiting opponent.
+
+    Using find_one_and_delete means two people queueing at the same instant can
+    never both be handed the same opponent.
+    """
+    if not _check():
+        return None
+    return await _db.matchmaking_queue.find_one_and_delete(
+        {"game": game, "size": size, "user_id": {"$ne": exclude_user_id}},
+        sort=[("created_at", 1)],
+    )
+
+
+async def update_matchmaking_request(request_id, time_text: str = None, postings: list = None) -> None:
     if not _check():
         return
     updates = {}
     if time_text is not None:
         updates["time_text"] = time_text
-    if channel_id is not None:
-        updates["channel_id"] = channel_id
-    if message_id is not None:
-        updates["message_id"] = message_id
+    if postings is not None:
+        updates["postings"] = postings
     if updates:
         await _db.matchmaking_queue.update_one({"_id": ObjectId(str(request_id))}, {"$set": updates})
 
@@ -636,16 +808,16 @@ async def remove_matchmaking_request(request_id) -> None:
     await _db.matchmaking_queue.delete_one({"_id": ObjectId(str(request_id))})
 
 
-async def get_matchmaking_queue(guild_id: str):
+async def get_matchmaking_queue():
     if not _check():
         return []
-    return await _db.matchmaking_queue.find({"guild_id": guild_id}).sort("created_at", 1).to_list(None)
+    return await _db.matchmaking_queue.find({}).sort("created_at", 1).to_list(None)
 
 
-async def get_user_matchmaking_requests(guild_id: str, user_id: str):
+async def get_user_matchmaking_requests(user_id: str):
     if not _check():
         return []
-    return await _db.matchmaking_queue.find({"guild_id": guild_id, "user_id": user_id}).to_list(None)
+    return await _db.matchmaking_queue.find({"user_id": user_id}).to_list(None)
 
 
 async def get_expired_matchmaking_requests(cutoff: datetime):

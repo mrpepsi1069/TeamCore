@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.embeds import error_embed
+from utils.moderation import hierarchy_error, send_mod_log
 
 
 class Ban(commands.Cog):
@@ -20,36 +21,33 @@ class Ban(commands.Cog):
         reason: str = "No reason provided",
         delete_days: app_commands.Range[int, 0, 7] = 0,
     ):
+        guild = interaction.guild
         if not interaction.user.guild_permissions.ban_members:
             return await interaction.response.send_message(
                 embed=error_embed("Permission Denied", "You need Ban Members permission."), ephemeral=True
             )
+        if not guild.me.guild_permissions.ban_members:
+            return await interaction.response.send_message(
+                embed=error_embed("Bot Permission Denied", "I need the Ban Members permission."), ephemeral=True
+            )
 
-        member = interaction.guild.get_member(user.id)
-
+        member = guild.get_member(user.id)
         if member:
-            if user.id == interaction.user.id:
-                return await interaction.response.send_message(
-                    embed=error_embed("Invalid Target", "You cannot ban yourself!"), ephemeral=True
-                )
-            if user.id == interaction.guild.owner_id:
-                return await interaction.response.send_message(
-                    embed=error_embed("Invalid Target", "You cannot ban the server owner!"), ephemeral=True
-                )
-            if member.top_role >= interaction.user.top_role:
-                return await interaction.response.send_message(
-                    embed=error_embed("Permission Denied", "You cannot ban someone with an equal or higher role!"),
-                    ephemeral=True,
-                )
-            if not member.is_bannable():
-                return await interaction.response.send_message(
-                    embed=error_embed("Cannot Ban", "I do not have permission to ban this user!"), ephemeral=True
-                )
+            problem = hierarchy_error(guild, interaction.user, member, "ban")
+            if problem:
+                return await interaction.response.send_message(embed=error_embed("Cannot Ban", problem), ephemeral=True)
+        elif user.id == interaction.user.id:
+            return await interaction.response.send_message(
+                embed=error_embed("Invalid Target", "You cannot ban yourself!"), ephemeral=True
+            )
 
+        await interaction.response.defer()
+
+        if member:  # DM first — once banned we can no longer reach them
             try:
                 dm_embed = discord.Embed(
                     title="🔨 You have been banned",
-                    description=f"You have been banned from **{interaction.guild.name}**",
+                    description=f"You have been banned from **{guild.name}**",
                     color=0xED4245,
                 )
                 dm_embed.add_field(name="Reason", value=reason)
@@ -59,26 +57,26 @@ class Ban(commands.Cog):
                 pass
 
         try:
-            await interaction.guild.ban(
+            await guild.ban(
                 user,
                 reason=f"{reason} | Banned by {interaction.user}",
-                delete_message_days=delete_days,
+                delete_message_seconds=delete_days * 86400,  # delete_message_days is deprecated
             )
-            embed = discord.Embed(
-                title="🔨 User Banned",
-                description=f"**{user}** has been banned from the server",
-                color=0xED4245,
-            )
-            embed.add_field(name="User ID", value=str(user.id), inline=True)
-            embed.add_field(name="Banned by", value=str(interaction.user), inline=True)
-            embed.add_field(name="Reason", value=reason, inline=False)
-            embed.add_field(name="Messages Deleted", value=f"{delete_days} day(s)", inline=True)
-            embed.set_thumbnail(url=user.display_avatar.url)
-            await interaction.response.send_message(embed=embed)
         except discord.HTTPException as e:
-            await interaction.response.send_message(
-                embed=error_embed("Ban Failed", str(e)), ephemeral=True
-            )
+            return await interaction.followup.send(embed=error_embed("Ban Failed", str(e)), ephemeral=True)
+
+        embed = discord.Embed(
+            title="🔨 User Banned",
+            description=f"**{user}** has been banned from the server",
+            color=0xED4245,
+        )
+        embed.add_field(name="User ID", value=str(user.id), inline=True)
+        embed.add_field(name="Banned by", value=str(interaction.user), inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Messages Deleted", value=f"{delete_days} day(s)", inline=True)
+        embed.set_thumbnail(url=user.display_avatar.url)
+        await interaction.followup.send(embed=embed)
+        await send_mod_log(guild, embed)
 
 
 async def setup(bot: commands.Bot):

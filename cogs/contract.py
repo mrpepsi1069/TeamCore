@@ -53,8 +53,7 @@ class ContractView(discord.ui.View):
         new_view.children[0].style = discord.ButtonStyle.secondary if new_paid else discord.ButtonStyle.success
         await interaction.message.edit(embed=new_embed, view=new_view)
 
-        user = await interaction.client.fetch_user(int(user_id))
-        await interaction.followup.send(f"✅ Contract marked as **{'PAID' if new_paid else 'UNPAID'}** for {user.mention}!", ephemeral=True)
+        await interaction.followup.send(f"✅ Contract marked as **{'PAID' if new_paid else 'UNPAID'}** for <@{user_id}>!", ephemeral=True)
 
     @discord.ui.button(label="Delete Contract", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="contract_delete")
     async def delete_contract(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -67,10 +66,12 @@ class ContractView(discord.ui.View):
             return await interaction.followup.send("❌ Contract not found in database!", ephemeral=True)
 
         user_id = contract["userId"]
-        user = await interaction.client.fetch_user(int(user_id))
         await db.remove_contract(str(interaction.guild_id), user_id)
-        await interaction.message.delete()
-        await interaction.followup.send(f"🗑️ Contract for {user.mention} has been deleted!", ephemeral=True)
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+        await interaction.followup.send(f"🗑️ Contract for <@{user_id}> has been deleted!", ephemeral=True)
 
 
 class Contract(commands.Cog):
@@ -113,13 +114,25 @@ class Contract(commands.Cog):
         embed.set_footer(text=f"Contract • {interaction.guild.name}")
 
         view = ContractView(str(user.id))
-        msg = await contract_ch.send(
-            content=f"🎉 **NEW CONTRACT!** Welcome {user.mention} to the team!",
-            embed=embed,
-            view=view,
-        )
+        try:
+            msg = await contract_ch.send(
+                content=f"🎉 **NEW CONTRACT!** Welcome {user.mention} to the team!",
+                embed=embed,
+                view=view,
+            )
+        except discord.HTTPException:
+            return await interaction.followup.send(embed=error_embed("Couldn't Post", f"I can't post in {contract_ch.mention}."), ephemeral=True)
 
-        await db.add_contract(str(interaction.guild_id), str(user.id), pos, amount, due, terms, False, str(msg.id), str(interaction.user.id))
+        try:
+            saved = await db.add_contract(str(interaction.guild_id), str(user.id), pos, amount, due, terms, False, str(msg.id), str(interaction.user.id))
+        except Exception:  # e.g. two coaches submitting a contract for the same player at once
+            saved = None
+        if not saved:
+            try:
+                await msg.delete()  # don't leave a contract card that isn't backed by a database record
+            except discord.HTTPException:
+                pass
+            return await interaction.followup.send(embed=error_embed("Couldn't Save", f"The contract for {user.mention} could not be saved."), ephemeral=True)
 
         try:
             dm = discord.Embed(title="🎉 Congratulations!", description=f"You've been contracted to **{interaction.guild.name}**!", color=0x00FF00)
@@ -166,6 +179,8 @@ class Contract(commands.Cog):
         app_commands.Choice(name="Paid Only", value="paid"),
     ])
     async def post(self, interaction: discord.Interaction, filter: str = "all"):
+        if not await has_coach_perms(interaction):
+            return await interaction.response.send_message(embed=error_embed("Permission Denied", "You need Coach role or higher."), ephemeral=True)
         await interaction.response.defer()
         contracts = await db.get_all_contracts(str(interaction.guild_id))
         if not contracts:
@@ -182,11 +197,7 @@ class Contract(commands.Cog):
         lines = []
         total_paid = total_unpaid = 0
         for c in contracts:
-            try:
-                u = await self.bot.fetch_user(int(c["userId"]))
-                uname = u.name
-            except Exception:
-                uname = "Unknown"
+            uname = f"<@{c['userId']}>"
             status = "✅ PAID" if c.get("paid") else "❌ UNPAID"
             emoji = "💚" if c.get("paid") else "💰"
             lines.append(f"{emoji} **{uname}** — {c['position']}\n└ ${c['amount']:,} | Due: {c['due']} | {status}")
@@ -196,12 +207,46 @@ class Contract(commands.Cog):
                 total_unpaid += c["amount"]
 
         label = {"all": "All Contracts", "unpaid": "Unpaid Contracts", "paid": "Paid Contracts"}[filter]
-        embed = discord.Embed(title=f"📋 {label}", description="\n\n".join(lines), color=0x5865F2)
+        # An embed description holds 4096 characters; keep what fits and say how many were cut.
+        shown, used = [], 0
+        for i, line in enumerate(lines):
+            if used + len(line) + 2 > 3900:
+                shown.append(f"*…and {len(lines) - i} more*")
+                break
+            shown.append(line)
+            used += len(line) + 2
+        embed = discord.Embed(title=f"📋 {label}", description="\n\n".join(shown), color=0x5865F2)
         embed.add_field(name="💰 Total Unpaid", value=f"${total_unpaid:,}", inline=True)
         embed.add_field(name="💚 Total Paid",   value=f"${total_paid:,}",   inline=True)
         embed.add_field(name="📊 Total",        value=str(len(contracts)),  inline=True)
         embed.set_footer(text=f"{interaction.guild.name} • Contract Overview")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+    @group.command(name="view", description="View a player's contract (yours, or anyone's if you're a coach)")
+    @app_commands.describe(user="Player to look up (leave empty for yourself)")
+    async def view(self, interaction: discord.Interaction, user: discord.User = None):
+        target = user or interaction.user
+        if target.id != interaction.user.id and not await has_coach_perms(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "You can only view your own contract."), ephemeral=True
+            )
+        contract = await db.get_player_contract(str(interaction.guild_id), str(target.id))
+        if not contract:
+            return await interaction.response.send_message(
+                embed=error_embed("No Contract", f"{target.mention} doesn't have a contract."), ephemeral=True
+            )
+        embed = discord.Embed(
+            title="📜 Contract",
+            color=0x00FF00 if contract.get("paid") else 0xFFD700,
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="👤 Player", value=target.mention, inline=True)
+        embed.add_field(name="🎮 Position", value=contract["position"], inline=True)
+        embed.add_field(name="💰 Amount", value=f"${contract['amount']:,}", inline=True)
+        embed.add_field(name="📅 Due Date", value=contract["due"], inline=True)
+        embed.add_field(name="💳 Paid", value="✅ **YES**" if contract.get("paid") else "❌ **NO**", inline=True)
+        embed.add_field(name="📋 Terms", value=contract["terms"], inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

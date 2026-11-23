@@ -4,11 +4,18 @@ from datetime import datetime, timezone
 import database as db
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """Mongo hands back naive datetimes unless the client is tz_aware; normalise to UTC."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def is_premium_guild(guild_id: str) -> bool:
     guild = await db.get_guild(guild_id)
     if not guild or not guild.get("premium"):
         return False
-    expires = guild.get("premium_expires_at")
+    expires = _aware(guild.get("premium_expires_at"))
     if expires and expires < datetime.now(timezone.utc):
         await db.set_premium(guild_id, False, None)
         return False
@@ -19,9 +26,8 @@ async def get_premium_status(guild_id: str) -> dict:
     guild = await db.get_guild(guild_id)
     if not guild or not guild.get("premium"):
         return {"is_premium": False, "expires_at": None, "days_remaining": None}
-    expires = guild.get("premium_expires_at")
+    expires = _aware(guild.get("premium_expires_at"))
     if not expires:
         return {"is_premium": True, "expires_at": None, "days_remaining": None}
     now = datetime.now(timezone.utc)
-    days = (expires - now).days
-    return {"is_premium": expires > now, "expires_at": expires, "days_remaining": days}
+    return {"is_premium": expires > now, "expires_at": expires, "days_remaining": max((expires - now).days, 0)}

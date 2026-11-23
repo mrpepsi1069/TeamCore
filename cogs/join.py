@@ -3,8 +3,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-
-ADMIN_ID = 1374932337917165702
+from config import OWNER_ID as ADMIN_ID
 
 
 class Join(commands.Cog):

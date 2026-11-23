@@ -1,11 +1,30 @@
 # cogs/times.py — Multiple time-slot polls
 
+import asyncio
 import re
 import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_manager_perms
+from utils.channels import poll_channel
+
+
+_poll_locks: dict[int, asyncio.Lock] = {}
+
+
+def _lock_for(message_id: int) -> asyncio.Lock:
+    lock = _poll_locks.get(message_id)
+    if lock is None:
+        lock = _poll_locks[message_id] = asyncio.Lock()
+    return lock
+
+
+def _clean_time(t: str) -> str:
+    """Poll state lives in the embed text and is parsed back out with markers, so a time containing
+    `**` or the clock emoji used to corrupt the poll. Strip anything that could confuse the parser."""
+    t = re.sub(r"[*\r\n]", " ", t or "").replace("🕐", "")
+    return re.sub(r"\s+", " ", t).strip()[:80]
 
 
 class Times(commands.Cog):
@@ -43,7 +62,14 @@ class Times(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        time_options = [t for t in [time1, time2, time3, time4, time5, time6] if t]
+        time_options = []
+        for t in (_clean_time(x) for x in [time1, time2, time3, time4, time5, time6] if x):
+            if t and t not in time_options:
+                time_options.append(t)
+        if len(time_options) < 2:
+            return await interaction.followup.send(
+                embed=error_embed("Not Enough Options", "Give at least two different time options."), ephemeral=True
+            )
 
         desc = f"**League:** {league}\n\nSelect which times work for you:\n\n"
         for t in time_options:
@@ -58,8 +84,9 @@ class Times(commands.Cog):
 
         view = TimesView(time_options, league)
 
+        channel = await poll_channel(interaction)
         try:
-            await interaction.channel.send(
+            await channel.send(
                 content=role.mention,
                 embed=embed,
                 view=view,
@@ -69,7 +96,7 @@ class Times(commands.Cog):
             await interaction.followup.send(
                 embed=success_embed(
                     "Times Poll Created",
-                    f"Created poll for **{league}** with {len(time_options)} options!"
+                    f"Created poll for **{league}** with {len(time_options)} options in {channel.mention}!"
                 ),
                 ephemeral=True,
             )
@@ -98,7 +125,7 @@ class Times(commands.Cog):
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component:
             return
-        cid = interaction.data.get("custom_id", "")
+        cid = (interaction.data or {}).get("custom_id", "")
         if not cid.startswith("times*"):
             return
 
@@ -109,35 +136,51 @@ class Times(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        embed = interaction.message.embeds[0]
         uid = str(interaction.user.id)
 
-        header, sections = _parse_sections(embed.description)
+        # Serialise clicks per poll and re-read the message inside the lock. Two people clicking at
+        # the same moment used to both start from the same snapshot, so one vote was lost.
+        async with _lock_for(interaction.message.id):
+            try:
+                message = await interaction.channel.fetch_message(interaction.message.id)
+            except discord.HTTPException:
+                message = interaction.message
 
-        if index >= len(sections):
-            return await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+            if not message.embeds:
+                return await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+            embed = message.embeds[0]
+            header, sections = _parse_sections(embed.description or "")
 
-        t, users = sections[index]
+            if index >= len(sections):
+                return await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
 
-        if uid in users:
-            users.remove(uid)
-        else:
-            users.append(uid)
+            t, users = sections[index]
+            if uid in users:
+                users.remove(uid)
+            else:
+                users.append(uid)
+            sections[index] = (t, users)
 
-        sections[index] = (t, users)
+            new_desc = _build_desc(header, sections)
+            if len(new_desc) > 4000:
+                # An embed description is capped at 4096 chars; without this check the edit failed
+                # and the person was left staring at "thinking…" forever.
+                return await interaction.followup.send(
+                    "❌ This poll has too many responses to record any more.", ephemeral=True
+                )
 
-        new_embed = discord.Embed.from_dict(embed.to_dict())
-        new_embed.description = _build_desc(header, sections)
-
-        await interaction.message.edit(embed=new_embed)
+            new_embed = discord.Embed.from_dict(embed.to_dict())
+            new_embed.description = new_desc
+            try:
+                await message.edit(embed=new_embed)
+            except discord.HTTPException:
+                return await interaction.followup.send("❌ Couldn't update the poll. Please try again.", ephemeral=True)
 
         selected = [t for t, users in sections if uid in users]
-
         if selected:
             msg = "✅ Your selected times:\n" + "\n".join(f"• {t}" for t in selected)
         else:
             msg = "ℹ️ You haven't selected any times yet."
-
         await interaction.followup.send(msg, ephemeral=True)
 
 

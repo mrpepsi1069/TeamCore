@@ -7,7 +7,17 @@ from discord import app_commands
 from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_coach_perms
+from utils.channels import poll_channel
 import database as db
+
+_poll_locks: dict[int, asyncio.Lock] = {}
+
+
+def _lock_for(message_id: int) -> asyncio.Lock:
+    lock = _poll_locks.get(message_id)
+    if lock is None:
+        lock = _poll_locks[message_id] = asyncio.Lock()
+    return lock
 
 
 def _extract_user_ids(value: str) -> list[str]:
@@ -26,42 +36,58 @@ class GametimeView(discord.ui.View):
     async def _handle(self, interaction: discord.Interaction, response: str, message_id: str = None):
         await interaction.response.defer(ephemeral=True)
 
-        # Determine which message to update
-        target_msg = interaction.message
-        is_dm = False
-
-        if message_id:
-            is_dm = True
+        # Work out which poll message to update: the one the button is on (server poll),
+        # or the original server poll when the click came from a DM button.
+        is_dm = message_id is not None
+        if is_dm:
             gametime = await db.get_gametime_by_message_id(message_id)
             if not gametime:
                 return await interaction.followup.send("❌ Could not find the original poll.", ephemeral=True)
+            channel = interaction.client.get_channel(int(gametime.get("channelId") or gametime.get("channel_id")))
+            poll_id = int(message_id)
+        else:
+            channel = interaction.channel
+            poll_id = interaction.message.id
+
+        # One click at a time per poll. Two people voting at the same moment used to both read the
+        # same embed and the second edit silently erased the first vote.
+        async with _lock_for(poll_id):
             try:
-                ch = interaction.client.get_channel(int(gametime.get("channelId") or gametime.get("channel_id")))
-                target_msg = await ch.fetch_message(int(message_id))
+                target_msg = await channel.fetch_message(poll_id)  # fresh copy, not the click-time snapshot
             except Exception:
-                return await interaction.followup.send("❌ Could not find the poll message.", ephemeral=True)
+                if is_dm:
+                    return await interaction.followup.send("❌ Could not find the poll message.", ephemeral=True)
+                target_msg = interaction.message
 
-        embed = target_msg.embeds[0]
-        fields = embed.fields
-        can_ids   = _extract_user_ids(fields[0].value)
-        cant_ids  = _extract_user_ids(fields[1].value)
-        unsure_ids = _extract_user_ids(fields[2].value)
+            if not target_msg.embeds or len(target_msg.embeds[0].fields) < 3:
+                return await interaction.followup.send("❌ This poll looks corrupted.", ephemeral=True)
+            embed = target_msg.embeds[0]
+            fields = embed.fields
+            can_ids = _extract_user_ids(fields[0].value)
+            cant_ids = _extract_user_ids(fields[1].value)
+            unsure_ids = _extract_user_ids(fields[2].value)
 
-        uid = str(interaction.user.id)
-        can_ids   = [i for i in can_ids   if i != uid]
-        cant_ids  = [i for i in cant_ids  if i != uid]
-        unsure_ids = [i for i in unsure_ids if i != uid]
+            uid = str(interaction.user.id)
+            can_ids = [i for i in can_ids if i != uid]
+            cant_ids = [i for i in cant_ids if i != uid]
+            unsure_ids = [i for i in unsure_ids if i != uid]
 
-        if response == "yes":    can_ids.append(uid)
-        elif response == "no":   cant_ids.append(uid)
-        elif response == "unsure": unsure_ids.append(uid)
+            if response == "yes":
+                can_ids.append(uid)
+            elif response == "no":
+                cant_ids.append(uid)
+            elif response == "unsure":
+                unsure_ids.append(uid)
 
-        new_embed = discord.Embed.from_dict(embed.to_dict())
-        new_embed.clear_fields()
-        new_embed.add_field(name=f"✅ Can Make ({len(can_ids)})",    value=_format_list(can_ids),    inline=False)
-        new_embed.add_field(name=f"❌ Can't Make ({len(cant_ids)})", value=_format_list(cant_ids),   inline=False)
-        new_embed.add_field(name=f"❓ Unsure ({len(unsure_ids)})",   value=_format_list(unsure_ids), inline=False)
-        await target_msg.edit(embed=new_embed)
+            new_embed = discord.Embed.from_dict(embed.to_dict())
+            new_embed.clear_fields()
+            new_embed.add_field(name=f"✅ Can Make ({len(can_ids)})", value=_format_list(can_ids), inline=False)
+            new_embed.add_field(name=f"❌ Can't Make ({len(cant_ids)})", value=_format_list(cant_ids), inline=False)
+            new_embed.add_field(name=f"❓ Unsure ({len(unsure_ids)})", value=_format_list(unsure_ids), inline=False)
+            try:
+                await target_msg.edit(embed=new_embed)
+            except discord.HTTPException:
+                return await interaction.followup.send("❌ This poll is too full to record more responses.", ephemeral=True)
 
         labels = {"yes": "Can Make ✅", "no": "Can't Make ❌", "unsure": "Unsure ❓"}
         text = f"✅ Response recorded: **{labels[response]}**"
@@ -105,8 +131,9 @@ class Gametime(commands.Cog):
         embed.add_field(name="❓ Unsure (0)",      value="• None yet", inline=False)
         embed.set_footer(text="TeamCore | Gametime Poll")
 
+        channel = await poll_channel(interaction)
         try:
-            msg = await interaction.channel.send(
+            msg = await channel.send(
                 content=role.mention,
                 embed=embed,
                 view=GametimeView(),
@@ -115,13 +142,18 @@ class Gametime(commands.Cog):
         except discord.Forbidden:
             return await interaction.followup.send("❌ I don't have permission to send messages here.", ephemeral=True)
 
-        jump = f"https://discord.com/channels/{interaction.guild_id}/{interaction.channel_id}/{msg.id}"
+        jump = f"https://discord.com/channels/{interaction.guild_id}/{channel.id}/{msg.id}"
         await db.create_gametime(
             str(interaction.guild_id), league, time,
-            str(msg.id), str(interaction.channel_id), str(role.id), str(interaction.user.id),
+            str(msg.id), str(channel.id), str(role.id), str(interaction.user.id),
         )
 
-        # DM role members
+        # DM role members (role.members is only complete once the guild's member list is loaded)
+        if not interaction.guild.chunked:
+            try:
+                await interaction.guild.chunk()
+            except Exception:
+                pass
         dm_count = 0
         for member in role.members:
             if member.bot:
@@ -146,7 +178,7 @@ class Gametime(commands.Cog):
                 pass
 
         await interaction.followup.send(
-            embed=success_embed("Gametime Created", f"Poll created for **{league}**\n📨 {dm_count} DMs sent\n⏰ {time}"),
+            embed=success_embed("Gametime Created", f"Poll created for **{league}** in {channel.mention}\n📨 {dm_count} DMs sent\n⏰ {time}"),
             ephemeral=True,
         )
 
