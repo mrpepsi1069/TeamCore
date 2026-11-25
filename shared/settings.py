@@ -17,7 +17,7 @@ def _list(name: str, default: str = "") -> list[str]:
 
 
 MONGODB_URI = os.getenv("MONGODB_URI") or os.getenv("DATABASE_URL")  # the bot already uses DATABASE_URL
-DB_NAME = os.getenv("MONGODB_DB", "lockerroom_bot")
+DB_NAME = (os.getenv("MONGODB_DB") or "lockerroom_bot").strip()   # an empty value falls back to the bot's database name
 
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
