@@ -199,6 +199,8 @@ def help_embed_v2() -> discord.Embed:
         "/record create|delete|edit|rename|reset - Manage teams (Manager)\n"
         "/record win|loss|tie - Add a result (Manager)\n"
         "/record view|list|history - View records\n"
+        "/roster add|remove|list|player - Team rosters\n"
+        "/match log|history - Match results (can update records)\n"
         "/leaderboard teams - Ranked teams (paginated)\n"
         "/leaderboard post - Live leaderboard that auto-updates (Manager)"), inline=False)
     e.add_field(name="📊 Stats Channels (Admin)", value=(

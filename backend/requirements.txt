@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pymongo>=4.9          # PyMongo's asynchronous API (AsyncMongoClient)
+httpx>=0.27
+cryptography>=42
+python-dotenv>=1.0
+tzdata>=2024.1        # IANA timezone database (needed on Windows / slim containers)

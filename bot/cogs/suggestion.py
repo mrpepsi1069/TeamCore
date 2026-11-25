@@ -56,7 +56,7 @@ class Suggestion(commands.Cog):
         if channel is None:
             return await interaction.response.send_message(embed=error_embed("Not Set Up", "No suggestion channel yet. A manager can set one with `/suggestion channel`."), ephemeral=True)
         await interaction.response.defer(ephemeral=True)
-        s = {"guild_id": gid, "suggestion_id": await db.next_seq(gid, "suggestion"), "author_id": str(interaction.user.id),
+        s = {"guild_id": gid, "suggestion_id": await db.next_seq(gid, "suggestion"), "author_id": str(interaction.user.id), "author_name": interaction.user.display_name,
              "text": sanitize_input(suggestion, 1000), "status": "pending", "response": None, "created_at": datetime.now(timezone.utc)}
         try:
             msg = await channel.send(embed=suggestion_embed(s, 0, 0), view=vote_view(s))

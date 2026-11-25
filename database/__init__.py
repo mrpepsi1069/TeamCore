@@ -97,6 +97,11 @@ def is_connected() -> bool:
     return _db is not None
 
 
+def handle():
+    """The raw database object (for modules such as database.teams that take `db` as a parameter)."""
+    return _db
+
+
 def col(name: str):
     """Collection accessor for the feature modules (None when the DB is down)."""
     return _db[name] if _db is not None else None
@@ -145,8 +150,37 @@ async def _migration_1_feature_indexes() -> None:
     await I(_db.suggestion_votes, [("guild_id", 1), ("suggestion_id", 1), ("user_id", 1)], unique=True)
 
 
+async def _migration_2_dashboard_indexes() -> None:
+    """Collections introduced by the website dashboard (sessions, bot_jobs, audit_logs, rosters, …)."""
+    from database.schema import apply_indexes
+    for err in await apply_indexes(_db):
+        print(f"⚠️ {err}")
+
+
+async def _migration_3_teams_rosters() -> None:
+    """Bring pre-dashboard data up to date for teams, competitions and rosters:
+    - teams get the new `division` field,
+    - every competition name used by a team becomes a real `competitions` document (dashboard pickers),
+    - duplicate roster rows (same player twice on a team) are removed so the unique roster index can build."""
+    from database import teams as T
+    await _db.teams.update_many({"division": {"$exists": False}}, {"$set": {"division": None}})
+    for t in await _db.teams.find({}, {"guild_id": 1, "competition": 1}).to_list(None):
+        await T.ensure_competition(_db, t["guild_id"], t.get("competition") or T.DEFAULT_COMPETITION)
+    seen = set()
+    for m in await _db.team_members.find({}).sort("created_at", 1).to_list(None):
+        k = (m["guild_id"], m["team_id"], m["user_id"])
+        if k in seen:
+            await _db.team_members.delete_one({"_id": m["_id"]})
+        seen.add(k)
+    from database.schema import apply_indexes
+    for err in await apply_indexes(_db):
+        print(f"⚠️ {err}")
+
+
 _MIGRATIONS = [
     (1, _migration_1_feature_indexes),
+    (2, _migration_2_dashboard_indexes),
+    (3, _migration_3_teams_rosters),
 ]
 
 

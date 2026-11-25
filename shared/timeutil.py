@@ -1,4 +1,4 @@
-"""utils/timeparse.py — duration/date parsing shared by polls, giveaways and countdowns."""
+"""shared/timeutil.py — duration/date parsing shared by polls, giveaways and countdowns."""
 
 import re
 from datetime import datetime, timedelta, timezone

@@ -11,10 +11,7 @@ MAX_TEAMS = 100
 DEFAULT_COMPETITION = "General"
 
 
-def win_pct(wins: int, losses: int, ties: int) -> float:
-    """Winning percentage; a tie counts as half a win (the usual convention)."""
-    games = wins + losses + ties
-    return (wins + 0.5 * ties) / games if games else 0.0
+from shared.records import win_pct, sort_teams  # noqa: E402,F401  (single source of truth, also used by the dashboard)
 
 
 def fmt_pct(team: dict) -> str:
@@ -23,16 +20,6 @@ def fmt_pct(team: dict) -> str:
 
 def fmt_record(team: dict) -> str:
     return f"{team['wins']}-{team['losses']}-{team['ties']}"
-
-
-def sort_teams(teams: list, mode: str) -> list:
-    """mode: wins | percentage | losses (fewest losses first)."""
-    p = lambda t: win_pct(t["wins"], t["losses"], t["ties"])  # noqa: E731
-    if mode == "percentage":
-        return sorted(teams, key=lambda t: (-p(t), -t["wins"], t["name_lower"]))
-    if mode == "losses":
-        return sorted(teams, key=lambda t: (t["losses"], -t["wins"], t["name_lower"]))
-    return sorted(teams, key=lambda t: (-t["wins"], -p(t), t["name_lower"]))
 
 
 async def get_team(guild_id, name: str):

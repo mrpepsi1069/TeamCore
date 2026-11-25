@@ -39,6 +39,7 @@ class Activity(commands.Cog):
         self.bot = bot
         self._buf: Counter = Counter()           # (guild_id, user_id, date) -> messages not yet written
         self._cfg: dict[str, tuple] = {}         # guild_id -> (fetched_at, settings)
+        self._names: dict[tuple, str] = {}       # (guild_id, user_id) -> latest display name (shown on the website)
         self.flush_loop.start()
         self.panel_loop.start()
 
@@ -70,6 +71,7 @@ class Activity(commands.Cog):
             if cid not in s["channels"]:
                 return
         self._buf[(str(message.guild.id), str(message.author.id), today_str())] += 1
+        self._names[(str(message.guild.id), str(message.author.id))] = message.author.display_name
 
     async def flush(self):
         if not self._buf or not db.is_connected():
@@ -77,7 +79,7 @@ class Activity(commands.Cog):
         pending, self._buf = self._buf, Counter()
         for (gid, uid, date), n in pending.items():
             try:
-                await db.col("activity_daily").update_one({"guild_id": gid, "user_id": uid, "date": date}, {"$inc": {"count": n}}, upsert=True)
+                await db.col("activity_daily").update_one({"guild_id": gid, "user_id": uid, "date": date}, {"$inc": {"count": n}, "$set": {"user_name": self._names.get((gid, uid), "")}}, upsert=True)
             except Exception:
                 self._buf[(gid, uid, date)] += n  # keep it for the next flush
 

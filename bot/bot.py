@@ -5,9 +5,18 @@ import sys
 import time
 import asyncio
 import traceback
+from pathlib import Path
+
+# Repo layout: /bot, /backend, /database, /shared. Make the repo root importable so the bot can
+# `import database` and `import shared` no matter where it is launched from.
+ROOT = Path(__file__).resolve().parent.parent
+for _p in (str(ROOT), str(ROOT / "bot")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from dotenv import load_dotenv
 
+load_dotenv(ROOT / ".env")
 load_dotenv()
 
 from aiohttp import web  # noqa: E402
@@ -40,7 +49,7 @@ DB_COMMANDS = {
     "lineup", "depthchart", "league", "contract", "gametime", "times", "activitycheck",
     "matchmaking", "matchmaking-queue", "matchmaking-cancel", "setup", "disableglobalmessages",
     "record", "stats", "lock", "unlock", "poll", "giveaway", "countdown", "activity", "rolepanel",
-    "announcement", "backup", "memberstats", "suggestion",
+    "announcement", "backup", "memberstats", "suggestion", "roster", "match",
 }
 
 
@@ -77,6 +86,8 @@ COGS = [
     "cogs.serverinfo", "cogs.record", "cogs.leaderboard", "cogs.stats", "cogs.lock", "cogs.unlock",
     "cogs.poll", "cogs.giveaway", "cogs.countdown", "cogs.activity", "cogs.embed", "cogs.rolepanel",
     "cogs.announcement", "cogs.backup", "cogs.memberstats", "cogs.suggestion",
+    # website dashboard bridge + automation (additive: the bot runs fine without the website)
+    "cogs.dashboard_bridge", "cogs.automation", "cogs.roster", "cogs.match",
 ]
 
 

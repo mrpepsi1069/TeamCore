@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import database as db
+from database import teams as T
 from utils.embeds import error_embed, success_embed
 from utils.moderation import send_mod_log
 from utils.permissions import has_manager_perms
@@ -49,10 +50,11 @@ class Record(commands.Cog):
 
     # ── commands ─────────────────────────────────────────────
     @group.command(name="create", description="Create a new team record")
-    @app_commands.describe(name="Team name", competition="Division/competition (default General)", logo="Logo image URL (optional)")
+    @app_commands.describe(name="Team name", competition="Competition (default General)", logo="Logo image URL (optional)", division="Division within the competition (optional)")
     @app_commands.autocomplete(competition=competition_autocomplete)
     async def create(self, interaction: discord.Interaction, name: app_commands.Range[str, 1, 50],
-                     competition: app_commands.Range[str, 1, 50] = DEFAULT_COMPETITION, logo: str = None):
+                     competition: app_commands.Range[str, 1, 50] = DEFAULT_COMPETITION, logo: str = None,
+                     division: app_commands.Range[str, 1, 50] = None):
         if not await has_manager_perms(interaction):
             return await interaction.response.send_message(embed=NO_PERMS(), ephemeral=True)
         name, competition = sanitize_input(name, 50), sanitize_input(competition, 50) or DEFAULT_COMPETITION
@@ -66,13 +68,10 @@ class Record(commands.Cog):
         if await get_team(gid, name):
             return await interaction.response.send_message(embed=error_embed("Already Exists", f"**{name}** already exists."), ephemeral=True)
 
-        team = {
-            "guild_id": gid, "team_id": await db.next_seq(gid, "team"), "name": name, "name_lower": name.lower(),
-            "competition": competition, "competition_lower": competition.lower(), "logo": logo,
-            "wins": 0, "losses": 0, "ties": 0, "created_at": datetime.now(timezone.utc), "created_by": str(interaction.user.id),
-        }
-        await db.col("teams").insert_one(dict(team))
-        await add_history(gid, team, "created", interaction.user.id, {}, snapshot(team))
+        try:  # shared with the website dashboard: same ids, same competition/division records, same history
+            team = await T.create_team(db.handle(), gid, name, competition, division, logo, interaction.user.id)
+        except T.TeamError as e:
+            return await interaction.response.send_message(embed=error_embed("Can't Create Team", str(e)), ephemeral=True)
         await interaction.response.send_message(embed=success_embed("Team Created", f"Created **{name}** in **{competition}**."))
         self.bot.dispatch("team_record_changed", gid, team["team_id"])
 
