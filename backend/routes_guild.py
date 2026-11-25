@@ -226,9 +226,16 @@ async def notifications(ctx: Ctx = Depends(guild_ctx)):
     return {"items": items}
 
 
-SEARCH = [("teams", "name", "teams", "name"), ("player_profiles", "name", "player_profiles", "name"), ("team_members", "username", "team_members", "username"),
-          ("suggestions", "text", "suggestions", "text"), ("tryouts", "player_name", "tryouts", "player_name"), ("hall_of_fame", "name", "hall_of_fame", "name"),
-          ("polls", "question", "polls", "question"), (*[("giveaways", "prize", "giveaways", "prize")])]
+SEARCH = [
+    ("teams", "name", "teams", "name"),
+    ("player_profiles", "name", "player_profiles", "name"),
+    ("team_members", "username", "team_members", "username"),
+    ("suggestions", "text", "suggestions", "text"),
+    ("tryouts", "player_name", "tryouts", "player_name"),
+    ("hall_of_fame", "name", "hall_of_fame", "name"),
+    ("polls", "question", "polls", "question"),
+    ("giveaways", "prize", "giveaways", "prize")
+]
 
 
 @router.get("/api/guilds/{gid}/search")
