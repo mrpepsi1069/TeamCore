@@ -48,7 +48,7 @@ async function boot() {
   clear(app).append(h("div", { class: "center" }, spinner()));
   try {
     const [me, meta, guilds] = await Promise.all([api("/auth/me"), api("/api/meta"), api("/api/guilds")]);
-    state.user = me; state.prefs = me.preferences || state.prefs; state.specs = meta.resources; state.settingsSpec = meta.settings; state.guilds = guilds.guilds;
+    state.user = me; state.prefs = me.preferences || state.prefs; state.specs = meta.resources; state.settingsSpec = meta.settings; state.guilds = guilds.guilds; state.botInfo = guilds.bot;
     setAccent(state.prefs.accent || "#FF7A1A");
   } catch (e) {
     if (e.status === 401) return loginScreen();
@@ -90,16 +90,39 @@ async function route() {
 
 async function serverPicker() {
   state.gid = null; state.gmeta = null;
-  try { state.guilds = (await api("/api/guilds")).guilds; } catch { /* keep cached list */ }
+  try { const r = await api("/api/guilds"); state.guilds = r.guilds; state.botInfo = r.bot; } catch { /* keep cached list */ }
   const card = (gd) => h("div", { class: "server", onclick: () => (gd.bot_present ? (location.hash = `#/g/${gd.id}`) : window.open(gd.invite_url, "_blank", "noopener")) },
     gd.icon ? h("img", { class: "gicon", src: gd.icon, alt: "" }) : h("div", { class: "gicon" }, gd.name[0]),
-    h("div", {}, h("b", {}, gd.name), h("div", { class: "sub" }, gd.bot_present ? `${gd.level} access` : "Add TeamCore →")));
+    h("div", {}, h("b", {}, gd.name), h("div", { class: "sub" }, gd.bot_present ? `${gd.level} access` : "Bot not synced — tap to add TeamCore →")));
   clear(app).append(h("div", { class: "content" },
     h("div", { class: "row" }, h("h1", {}, "Choose a server"), h("span", { class: "spacer" }),
-      h("button", { class: "btn small", onclick: async () => { state.guilds = (await api("/api/guilds?refresh=true")).guilds; serverPicker(); } }, "↻ Refresh"),
+      h("button", { class: "btn small", onclick: async () => { const r = await api("/api/guilds?refresh=true"); state.guilds = r.guilds; state.botInfo = r.bot; serverPicker(); } }, "↻ Refresh"),
       h("button", { class: "btn small", onclick: signOut }, "Sign out")),
     h("p", { class: "sub" }, "Servers you own or manage — or where an admin gave you dashboard access."),
+    botBanner(),
     state.guilds.length ? h("div", { class: "servers" }, state.guilds.map(card)) : h("div", { class: "card empty" }, "No servers found. You need Administrator / Manage Server, or an admin must grant you access.")));
+}
+
+// Explains WHY servers show "Add TeamCore" instead of leaving the user guessing.
+function botBanner() {
+  const b = state.botInfo, missing = state.guilds.filter((x) => !x.bot_present).length;
+  if (!b || (!missing && b.online)) return null;
+  const ago = b.last_seen ? Math.max(1, Math.round((Date.now() - new Date(b.last_seen)) / 60000)) : null;
+  let title, text;
+  if (!b.last_seen) {
+    title = "The bot has never reported to this database";
+    text = "Check that your bot host (Koyeb) is running the NEW code — run command `python bot/bot.py` — and that its MONGODB_URI / DATABASE_URL points at the same MongoDB cluster as this website. Then restart the bot and press Refresh.";
+  } else if (!b.online) {
+    title = `The bot was last seen ${ago} minute(s) ago`;
+    text = "It looks offline (free hosts can sleep). Wake or restart it, wait a minute, then press Refresh.";
+  } else if (!b.servers_synced) {
+    title = "The bot is online but hasn't published any servers yet";
+    text = "Restart the bot and watch its log for “📡 Dashboard: published …”. If you don't see it, the bot is still on old code.";
+  } else {
+    title = `TeamCore is online and has synced ${b.servers_synced} server(s)`;
+    text = "Servers marked “Add TeamCore” don't have the bot — or it joined in the last few minutes. Press Refresh in a moment.";
+  }
+  return h("div", { class: "card" }, h("b", {}, "ℹ️ " + title), h("p", { class: "sub" }, text));
 }
 
 async function signOut() {
