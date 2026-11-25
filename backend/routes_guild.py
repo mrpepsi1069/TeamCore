@@ -3,7 +3,6 @@
 from datetime import timedelta
 from zoneinfo import available_timezones
 
-import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from shared.access import DANGEROUS_BITS, has_level, level_from_discord
@@ -27,21 +26,6 @@ SETTING_FIELDS = (
 )
 
 
-async def _bot_guild_ids_from_discord() -> set[str]:
-    """Fallback: query Discord directly with the bot token to verify bot presence, bypassing empty DB collections."""
-    token = getattr(env, "DISCORD_BOT_TOKEN", None) or getattr(env, "BOT_TOKEN", None)
-    if not token:
-        return set()
-    try:
-        async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get("https://discord.com/api/v10/users/@me/guilds", headers={"Authorization": f"Bot {token}"})
-        if r.status_code == 200:
-            return {str(g["id"]) for g in r.json()}
-    except Exception:
-        pass
-    return set()
-
-
 @router.get("/api/meta")
 async def meta():
     """Resource specs the frontend renders its tables and forms from (no secrets, no auth needed)."""
@@ -53,38 +37,22 @@ async def meta():
 async def my_guilds(refresh: bool = False, session: dict = Depends(current_session)):
     """Servers the user belongs to, split into: manageable (bot present + access) and 'add the bot' candidates."""
     guilds = await refreshed_guilds(session, force=refresh)
-    
-    str_ids = [str(g["id"]) for g in guilds]
-    int_ids = [int(gid) for gid in str_ids if gid.isdigit()]
-    query_ids = list(set(str_ids + int_ids))
-
-    # Check MongoDB collection
-    present_docs = await coll("servers").find({"guild_id": {"$in": query_ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)
-    present = {str(s["guild_id"]): s for s in present_docs}
-    
-    # Live fallback via Discord Bot API token
-    live_bot_ids = await _bot_guild_ids_from_discord()
-
-    grants = {str(g["guild_id"]): g["level"] for g in await coll("dashboard_permissions").find({"guild_id": {"$in": query_ids}, "user_id": session["user_id"]}).to_list(None)}
-    
+    ids = [g["id"] for g in guilds]
+    present = {s["guild_id"]: s for s in await coll("servers").find({"guild_id": {"$in": ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)}
+    hb = await coll("servers").find_one({"guild_id": "_bot"}, {"heartbeat": 1})
+    last_seen = hb.get("heartbeat") if hb else None
+    bot_info = {"last_seen": ser(last_seen) if last_seen else None, "online": bool(last_seen and now() - last_seen < timedelta(minutes=3)),
+                "servers_synced": await coll("servers").count_documents({"guild_id": {"$ne": "_bot"}})}
+    grants = {g["guild_id"]: g["level"] for g in await coll("dashboard_permissions").find({"guild_id": {"$in": ids}, "user_id": session["user_id"]}).to_list(None)}
     out = []
     for g in guilds:
-        gid = str(g["id"])
-        level = level_from_discord(g["owner"], g["permissions"]) or grants.get(gid)
-        
-        # Bot is present if found in MongoDB OR found via live Discord bot token check
-        has_bot = (gid in present) or (gid in live_bot_ids)
-        
+        level = level_from_discord(g["owner"], g["permissions"]) or grants.get(g["id"])
+        has_bot = g["id"] in present
         if level:
-            out.append({
-                **g, 
-                "level": level, 
-                "bot_present": has_bot, 
-                "member_count": present.get(gid, {}).get("member_count"),
-                "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={gid}"
-            })
+            out.append({**g, "level": level, "bot_present": has_bot, "member_count": present.get(g["id"], {}).get("member_count"),
+                        "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={g['id']}"})
     out.sort(key=lambda g: (not g["bot_present"], g["name"].lower()))
-    return {"guilds": out}
+    return {"guilds": out, "bot": bot_info}
 
 
 @router.get("/api/guilds/{gid}/meta")
@@ -226,16 +194,9 @@ async def notifications(ctx: Ctx = Depends(guild_ctx)):
     return {"items": items}
 
 
-SEARCH = [
-    ("teams", "name", "teams", "name"),
-    ("player_profiles", "name", "player_profiles", "name"),
-    ("team_members", "username", "team_members", "username"),
-    ("suggestions", "text", "suggestions", "text"),
-    ("tryouts", "player_name", "tryouts", "player_name"),
-    ("hall_of_fame", "name", "hall_of_fame", "name"),
-    ("polls", "question", "polls", "question"),
-    ("giveaways", "prize", "giveaways", "prize")
-]
+SEARCH = [("teams", "name", "teams", "name"), ("player_profiles", "name", "player_profiles", "name"), ("team_members", "username", "team_members", "username"),
+          ("suggestions", "text", "suggestions", "text"), ("tryouts", "player_name", "tryouts", "player_name"), ("hall_of_fame", "name", "hall_of_fame", "name"),
+          ("polls", "question", "polls", "question"), ("giveaways", "prize", "giveaways", "prize")]
 
 
 @router.get("/api/guilds/{gid}/search")
