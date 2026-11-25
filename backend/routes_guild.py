@@ -38,15 +38,27 @@ async def my_guilds(refresh: bool = False, session: dict = Depends(current_sessi
     """Servers the user belongs to, split into: manageable (bot present + access) and 'add the bot' candidates."""
     guilds = await refreshed_guilds(session, force=refresh)
     ids = [g["id"] for g in guilds]
+    
+    # Check the servers collection in MongoDB
     present = {s["guild_id"]: s for s in await coll("servers").find({"guild_id": {"$in": ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)}
     grants = {g["guild_id"]: g["level"] for g in await coll("dashboard_permissions").find({"guild_id": {"$in": ids}, "user_id": session["user_id"]}).to_list(None)}
+    
     out = []
     for g in guilds:
         level = level_from_discord(g["owner"], g["permissions"]) or grants.get(g["id"])
         has_bot = g["id"] in present
+        
+        # Fallback check: If the user has Administrator or is the owner, but the bot isn't in MongoDB yet,
+        # you can optionally force bot_present to true or trigger a background sync if needed.
         if level:
-            out.append({**g, "level": level, "bot_present": has_bot, "member_count": present.get(g["id"], {}).get("member_count"),
-                        "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={g['id']}"})
+            out.append({
+                **g, 
+                "level": level, 
+                "bot_present": has_bot, 
+                "member_count": present.get(g["id"], {}).get("member_count"),
+                "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={g['id']}"
+            })
+            
     out.sort(key=lambda g: (not g["bot_present"], g["name"].lower()))
     return {"guilds": out}
 
@@ -229,4 +241,4 @@ async def put_prefs(body: dict = Body(...), user: dict = Depends(current_user)):
             raise HTTPException(422, {"errors": {"timezone": "Unknown timezone"}})
         prefs["timezone"] = body["timezone"]
     await coll("users").update_one({"user_id": user["user_id"]}, {"$set": {"preferences": prefs}})
-    return prefs
+    return prefs[span_4](start_span)[span_4](end_span)
