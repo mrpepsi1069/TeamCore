@@ -3,7 +3,6 @@
 from datetime import timedelta
 from zoneinfo import available_timezones
 
-import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from shared.access import DANGEROUS_BITS, has_level, level_from_discord
@@ -27,21 +26,6 @@ SETTING_FIELDS = (
 )
 
 
-async def _bot_guild_ids_from_discord() -> set[str]:
-    """Fallback: if DISCORD_BOT_TOKEN is available to the backend, fetch the bot's actual guild list from Discord."""
-    token = getattr(env, "DISCORD_BOT_TOKEN", None) or getattr(env, "BOT_TOKEN", None)
-    if not token:
-        return set()
-    try:
-        async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get("https://discord.com/api/v10/users/@me/guilds", headers={"Authorization": f"Bot {token}"})
-        if r.status_code == 200:
-            return {str(g["id"]) for g in r.json()}
-    except Exception:
-        pass
-    return set()
-
-
 @router.get("/api/meta")
 async def meta():
     """Resource specs the frontend renders its tables and forms from (no secrets, no auth needed)."""
@@ -53,26 +37,30 @@ async def meta():
 async def my_guilds(refresh: bool = False, session: dict = Depends(current_session)):
     """Servers the user belongs to, split into: manageable (bot present + access) and 'add the bot' candidates."""
     guilds = await refreshed_guilds(session, force=refresh)
+    
+    # Collect IDs as both strings and integers to handle MongoDB type mismatches
     str_ids = [str(g["id"]) for g in guilds]
-    int_ids = [int(g["id"]) for g in guilds if str(g["id"]).isdigit()]
-    query_ids = [*str_ids, *int_ids]
+    int_ids = [int(g["id"]) for g in str_ids if g.isdigit()]
+    query_ids = list(set(str_ids + int_ids))
 
-    # Match both string and integer guild_id documents in MongoDB
-    docs = await coll("servers").find({"guild_id": {"$in": query_ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)
-    present = {str(s["guild_id"]): s for s in docs}
-
-    # If refresh=true or none matched in DB, also check live Discord bot guilds (when token is configured)
-    live_bot_ids = await _bot_guild_ids_from_discord() if (refresh or not present) else set()
-
+    present_docs = await coll("servers").find({"guild_id": {"$in": query_ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)
+    present = {str(s["guild_id"]): s for s in present_docs}
+    
     grants = {str(g["guild_id"]): g["level"] for g in await coll("dashboard_permissions").find({"guild_id": {"$in": query_ids}, "user_id": session["user_id"]}).to_list(None)}
+    
     out = []
     for g in guilds:
         gid = str(g["id"])
         level = level_from_discord(g["owner"], g["permissions"]) or grants.get(gid)
-        has_bot = (gid in present) or (gid in live_bot_ids)
+        has_bot = gid in present
         if level:
-            out.append({**g, "level": level, "bot_present": has_bot, "member_count": present.get(gid, {}).get("member_count"),
-                        "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={gid}"})
+            out.append({
+                **g, 
+                "level": level, 
+                "bot_present": has_bot, 
+                "member_count": present.get(gid, {}).get("member_count"),
+                "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={gid}"
+            })
     out.sort(key=lambda g: (not g["bot_present"], g["name"].lower()))
     return {"guilds": out}
 
@@ -255,4 +243,4 @@ async def put_prefs(body: dict = Body(...), user: dict = Depends(current_user)):
             raise HTTPException(422, {"errors": {"timezone": "Unknown timezone"}})
         prefs["timezone"] = body["timezone"]
     await coll("users").update_one({"user_id": user["user_id"]}, {"$set": {"preferences": prefs}})
-    return prefs
+    return prefs[span_1](start_span)[span_1](end_span)
