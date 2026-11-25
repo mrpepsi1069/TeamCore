@@ -6,7 +6,7 @@ from bson import ObjectId
 
 try:
     from motor.motor_asyncio import AsyncIOMotorClient
-except ImportError:  # the website backend uses PyMongo's async client, not Motor
+except ImportError:  # the website backend imports this package for database.teams/schema but uses PyMongo's async client, not Motor
     AsyncIOMotorClient = None
 
 _client = None
@@ -21,7 +21,9 @@ async def initialize() -> bool:
     call blocking for the full server-selection timeout and then raising.
     """
     global _client, _db
-    url = os.getenv("DATABASE_URL")
+    if AsyncIOMotorClient is None:
+        raise RuntimeError("motor is not installed — run: pip install -r bot/requirements.txt")
+    url = os.getenv("DATABASE_URL") or os.getenv("MONGODB_URI")
     if not url:
         print("❌ DATABASE_URL is not set")
         print("⚠️  Continuing without database")
