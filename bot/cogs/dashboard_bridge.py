@@ -42,21 +42,61 @@ class DashboardBridge(commands.Cog):
         self.bot = bot
         self._debounce: dict[int, asyncio.Task] = {}
         self._worker_task: asyncio.Task | None = None
+        self._ticks = 0
         self.heartbeat.start()
+        self.resync.start()
 
     async def cog_load(self):
         self._worker_task = asyncio.create_task(self._worker())
 
     def cog_unload(self):
         self.heartbeat.cancel()
+        self.resync.cancel()
         if self._worker_task:
             self._worker_task.cancel()
 
     # ── server cache (so the website can show channel/role pickers without the bot token) ──
-    async def publish(self, guild: discord.Guild):
-        if db.is_connected():
-            doc = build_cache(guild)
-            await db.col("servers").replace_one({"guild_id": doc["guild_id"]}, doc, upsert=True)
+    async def publish(self, guild: discord.Guild) -> bool:
+        """Write this server's name/channels/roles to the shared database. Returns True on success."""
+        if not db.is_connected():
+            return False
+        doc = build_cache(guild)
+        await db.col("servers").replace_one({"guild_id": doc["guild_id"]}, doc, upsert=True)
+        return True
+
+    async def publish_all(self, only_missing: bool = False) -> tuple[int, int]:
+        """Publish every server the bot is in. Returns (published, total)."""
+        guilds = list(self.bot.guilds)
+        if only_missing:
+            known = set(await db.col("servers").distinct("guild_id"))
+            guilds = [g for g in guilds if str(g.id) not in known]
+        done = 0
+        for g in guilds:
+            try:
+                done += 1 if await self.publish(g) else 0
+            except Exception as e:
+                print(f"⚠️ Dashboard sync failed for {g.name} ({g.id}): {e}")
+        return done, len(guilds)
+
+    @tasks.loop(minutes=10)
+    async def resync(self):
+        """Safety net: the website only lists servers that exist in `servers`. If the bot started before the database
+        was reachable, or a write was lost, this repairs it within 10 minutes (and refreshes everything every 6 hours)."""
+        self._ticks += 1
+        if not db.is_connected():
+            try:
+                await db.initialize()  # database was down at startup — try again
+            except Exception as e:
+                print(f"⚠️ Database still unavailable: {e}")
+                return
+        done, total = await self.publish_all(only_missing=(self._ticks % 36 != 0))
+        if total:
+            print(f"📡 Dashboard resync: published {done}/{total} server(s)")
+
+    @resync.before_loop
+    async def _resync_ready(self):
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(60)  # on_ready already did the first full publish
 
     def schedule_publish(self, guild: discord.Guild):
         """Coalesce bursts of channel/role events into one write (keeps the free-tier database quiet)."""
@@ -83,12 +123,14 @@ class DashboardBridge(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         if not db.is_connected():
+            print("⚠️ Dashboard sync skipped: database not connected (will retry automatically).")
             return
-        for g in self.bot.guilds:  # one write per server per start
-            try:
-                await self.publish(g)
-            except Exception as e:
-                print(f"⚠️ cache publish failed for {g.id}: {e}")
+        done, total = await self.publish_all()  # one write per server per start
+        print(f"📡 Dashboard: published {done}/{total} server(s) to the shared database")
+
+    @commands.Cog.listener()
+    async def on_guild_available(self, guild):
+        self.schedule_publish(guild)
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
