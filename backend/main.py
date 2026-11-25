@@ -64,6 +64,23 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/health/db")
+async def health_db():
+    """Which database is this API reading, and has the bot written to it? (No secrets: only the database name,
+    the first two labels of the cluster address, and counts.) Use it to confirm the bot and website share one database."""
+    from urllib.parse import urlparse
+    from backend.util import ser
+    d = db.db()
+    host = (urlparse(settings.MONGODB_URI or "").hostname or "").split(".")
+    hb = await d.servers.find_one({"guild_id": "_bot"}, {"heartbeat": 1})
+    return {
+        "database": settings.DB_NAME,
+        "cluster_hint": ".".join(host[:2]),
+        "servers_synced": await d.servers.count_documents({"guild_id": {"$ne": "_bot"}}),
+        "bot_last_seen": ser(hb["heartbeat"]) if hb and hb.get("heartbeat") else None,
+    }
+
+
 # Optional single-host mode: SERVE_FRONTEND=1 serves /frontend from this same server (set API_BASE to "" and FRONTEND_URL = BACKEND_URL).
 if os.getenv("SERVE_FRONTEND") == "1":
     from fastapi.staticfiles import StaticFiles
