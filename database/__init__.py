@@ -2,11 +2,14 @@
 
 import os
 from datetime import datetime, timezone
-from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+except ImportError:  # the website backend uses PyMongo's async client, not Motor
+    AsyncIOMotorClient = None
 
-_client: AsyncIOMotorClient | None = None
+_client = None
 _db = None
 
 
