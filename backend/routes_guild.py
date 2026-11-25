@@ -6,7 +6,7 @@ from zoneinfo import available_timezones
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from shared.access import DANGEROUS_BITS, has_level, level_from_discord
-from shared.resources import F, RESOURCES, clean_value, public_spec
+from shared.resources import F, RESOURCES, ValidationError, clean_value, public_spec
 from shared import settings as env
 from backend import audit, bridge
 from backend.auth import refreshed_guilds
@@ -37,19 +37,30 @@ async def meta():
 async def my_guilds(refresh: bool = False, session: dict = Depends(current_session)):
     """Servers the user belongs to, split into: manageable (bot present + access) and 'add the bot' candidates."""
     guilds = await refreshed_guilds(session, force=refresh)
+    
+    # Fixed: Correctly collect string and integer IDs without treating strings as dicts
     str_ids = [str(g["id"]) for g in guilds]
-    int_ids = [int(g["id"]) for g in str_ids if g.isdigit()]
-    query_ids = str_ids + int_ids
-    present = {str(s["guild_id"]): s for s in await coll("servers").find({"guild_id": {"$in": query_ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)}
+    int_ids = [int(gid) for gid in str_ids if gid.isdigit()]
+    query_ids = list(set(str_ids + int_ids))
+
+    present_docs = await coll("servers").find({"guild_id": {"$in": query_ids}}, {"guild_id": 1, "member_count": 1}).to_list(None)
+    present = {str(s["guild_id"]): s for s in present_docs}
+    
     grants = {str(g["guild_id"]): g["level"] for g in await coll("dashboard_permissions").find({"guild_id": {"$in": query_ids}, "user_id": session["user_id"]}).to_list(None)}
+    
     out = []
     for g in guilds:
         gid = str(g["id"])
         level = level_from_discord(g["owner"], g["permissions"]) or grants.get(gid)
         has_bot = gid in present
         if level:
-            out.append({**g, "level": level, "bot_present": has_bot, "member_count": present.get(gid, {}).get("member_count"),
-                        "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={gid}"})
+            out.append({
+                **g, 
+                "level": level, 
+                "bot_present": has_bot, 
+                "member_count": present.get(gid, {}).get("member_count"),
+                "invite_url": None if has_bot else f"https://discord.com/oauth2/authorize?client_id={env.DISCORD_CLIENT_ID}&scope=bot%20applications.commands&permissions=1099784744055&guild_id={gid}"
+            })
     out.sort(key=lambda g: (not g["bot_present"], g["name"].lower()))
     return {"guilds": out}
 
