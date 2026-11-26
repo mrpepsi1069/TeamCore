@@ -236,9 +236,10 @@ R("matches", "Match History", "🏟️", "Competition", "matches",
    F("away_score", "int", required=True, min=0, max=9999), F("played_at", "datetime", required=True),
    F("notes", "text", max=1000),
    F("apply_record", "bool", "Update team records", default=False, create_only=True,
-     help="Adds a win/loss/tie to your team — and to the opponent's too when it's a dashboard team (logged in record history).")],
-  ["played_at", "home_name", "score", "away_name", "competition"], sort=["played_at", -1], search=["notes", "competition"],
-  check=_match_check)
+     help="Adds a win/loss/tie to your team — and to the opponent's too when it's a dashboard team (logged in record history)."),
+   F("ff", "text", "Football Fusion", readonly=True)],
+  ["played_at", "home_name", "score", "away_name", "competition", "ff"], sort=["played_at", -1], search=["notes", "competition"],
+  check=_match_check, help="Import a Football Fusion report from the Matches tab to attach the full game stats sheet to a match.")
 
 # ───────────── Community ─────────────
 R("polls", "Polls", "📊", "Community", "polls",
@@ -356,13 +357,14 @@ R("hall_of_fame", "Hall of Fame", "🏛️", "Players", "hall_of_fame",
 
 # ───────────── Statistics channels ─────────────
 R("stats_channels", "Statistics Channels", "📈", "Competition", "stats_channels",
-  [F("type", "select", "Statistic", choices=["members", "humans", "bots", "boosts", "team", "record", "rings", "custom"],
+  [F("type", "select", "Statistic", choices=["members", "humans", "bots", "boosts", "team", "record", "rings", "rings_league", "custom"],
      required=True, create_only=True),
    F("team_id", "int", "Team", picker="team", create_only=True), F("label", "str", "Custom name", max=40, create_only=True),
+   F("league", "str", "League", max=20, create_only=True, help="For Rings by league: the league's abbreviation or name, e.g. NFA."),
    F("value", "str", "Custom value", max=60), F("template", "str", "Channel name template", max=100,
                                               help="e.g. 👥 Members: {value}   •   placeholders: {value} {name} {record} {wins} {losses} {ties} {pct} {teams} {rings} {leagues}")],
   ["key", "type", "channel_id", "last_name"], write="manager",
-  help="Overall team record adds up every team's wins/losses/ties across all leagues; Championship rings counts the rings in this server.")
+  help="Overall team record adds up every team's wins/losses/ties across all leagues; Championship rings counts the rings in this server, or just one league's.")
 
 RESOURCE_ORDER = list(RESOURCES)
 

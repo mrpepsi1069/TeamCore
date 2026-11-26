@@ -169,7 +169,10 @@ function teamRecordRow(t, { onChanged, compact = false } = {}) {
           h("b", {}, x.action === "note" ? "Note" : x.action),
           x.note ? h("span", {}, x.note) : null,
           x.after && "wins" in x.after ? h("span", { class: "record" }, `${x.after.wins}-${x.after.losses}-${x.after.ties}`) : null,
-          h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(x.timestamp)))))
+          h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(x.timestamp)),
+          x.action === "note" ? h("div", { class: "row end" },
+            h("button", { class: "btn small ghost", type: "button", onclick: () => editNote(x) }, "Edit"),
+            h("button", { class: "btn small danger", type: "button", onclick: () => deleteNote(x) }, "Delete")) : null)))
           : h("p", { class: "page-sub" }, "Nothing on the timeline yet."));
       const m = modal(`${t.name} — history`, h("div", {},
         h("div", { class: "field" }, h("label", {}, "Note"), note,
@@ -191,6 +194,35 @@ function teamRecordRow(t, { onChanged, compact = false } = {}) {
           add.disabled = false;
         }
       });
+      const reload = () => { m.close(); history(); };
+      const editNote = (x) => {
+        const text = h("textarea", { maxLength: 500, rows: 2, value: x.note || "" });
+        const at = h("input", { id: "edit-note-when", type: "datetime-local", value: localDateTime(new Date(x.timestamp)) });
+        const errBox = h("div", { class: "err" });
+        modal("Edit timeline note", h("div", {}, h("div", { class: "field" }, h("label", {}, "Note"), text,
+          h("label", { for: "edit-note-when" }, "When it happened"), at, errBox)),
+          [{ label: "Cancel", onClick: (c) => c() },
+            { label: "Save note", cls: "primary", onClick: async (c, btns) => {
+              errBox.textContent = "";
+              if (!text.value.trim()) { errBox.textContent = "Write something first."; return; }
+              btns.forEach((b) => (b.disabled = true));
+              try {
+                await g(`/teams/${t.team_id}/history/${x.id}`, { method: "PATCH", body: { note: text.value.trim(), happened_at: at.value ? new Date(at.value).toISOString() : undefined } });
+                c(); toast("Note updated"); reload();
+              } catch (e) {
+                errBox.textContent = e.errors?.note || e.errors?.happened_at || e.message;
+                btns.forEach((b) => (b.disabled = false));
+              }
+            } }], { wide: true });
+      };
+      const deleteNote = async (x) => {
+        if (!(await confirmDialog("Delete note", "Remove this note from the timeline?", { confirmLabel: "Delete" }))) return;
+        try {
+          await g(`/teams/${t.team_id}/history/${x.id}`, { method: "DELETE" });
+          toast("Note deleted");
+          reload();
+        } catch (e) { toast(e.message, "err"); }
+      };
     } catch (e) { toast(e.message, "err"); }
   };
   return h("div", { class: "team-row" },
@@ -321,6 +353,46 @@ async function rostersBody(el) {
   return renderResource(body, "team_members", { embedded: true });
 }
 
+// ───────── matches: import a Football Fusion report ─────────
+function openFusionImport(onSaved) {
+  const report = h("textarea", { rows: 8, maxLength: 20000, placeholder: "Paste the whole Football Fusion game report, starting with “Game Report • …”" });
+  const when = h("input", { id: "ff-when", type: "datetime-local", value: localDateTime(new Date()) });
+  const records = h("input", { type: "checkbox" });
+  const err = h("div", { class: "err" });
+  modal("Import Football Fusion report", h("div", {},
+    h("div", { class: "field" }, h("label", {}, "Game report"), report,
+      h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the report's score is used as-is. An unknown opponent is kept as a plain name."), err),
+    h("div", { class: "field" }, h("label", { for: "ff-when" }, "When it was played"), when),
+    h("label", { class: "row" }, records, " Also update team records")),
+    [{ label: "Cancel", onClick: (c) => c() },
+      { label: "Import match", cls: "primary", onClick: async (c, btns) => {
+        err.textContent = "";
+        if (!report.value.trim()) { err.textContent = "Paste the report first."; return; }
+        btns.forEach((b) => (b.disabled = true));
+        try {
+          const res = await g("/matches/import", { method: "POST", body: { report: report.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked } });
+          c(); toast(res.notice || "Match imported", res.queued ? "warn" : "");
+          onSaved?.();
+        } catch (e) {
+          err.textContent = e.errors?.report || e.errors?.played_at || e.message;
+          btns.forEach((b) => (b.disabled = false));
+        }
+      } }], { wide: true });
+}
+
+async function matchesBody(el) {
+  clear(el);
+  const reload = () => { clear(el).append(spinner()); matchesBody(el); };
+  const spec = state.specs.matches;
+  const body = h("div", {});
+  el.append(h("div", { class: "row" },
+    h("p", { class: "page-sub" }, "Log a match against any opponent, or import a Football Fusion report to attach its full stat sheet. Matches with a report get a Stats button."),
+    h("span", { class: "spacer" }),
+    spec && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openFusionImport(reload) }, "Import FF report") : null),
+    body);
+  return renderResource(body, "matches", { embedded: true });
+}
+
 async function leaguesBody(el) {
   const [{ items: teams }, leaguesRes] = await Promise.all([
     g("/r/teams?per_page=100"),
@@ -387,7 +459,7 @@ export function competitionPage(c, initial = "leagues") {
       { key: "leagues", label: "Leagues", render: (el) => leaguesBody(el) },
       { key: "teams", label: "Teams", render: (el) => teamsBody(el) },
       { key: "rosters", label: "Rosters", render: (el) => rostersBody(el) },
-      { key: "matches", label: "Matches", render: (el) => renderResource(el, "matches", { embedded: true }) },
+      { key: "matches", label: "Matches", render: (el) => matchesBody(el) },
       { key: "standings", label: "Standings", render: (el) => leaderboardBody(el) },
       { key: "seasons", label: "Competitions", render: (el) => renderResource(el, "competitions", { embedded: true }) },
       { key: "divisions", label: "Divisions", render: (el) => renderResource(el, "divisions", { embedded: true }) },

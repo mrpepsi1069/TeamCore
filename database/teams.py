@@ -173,7 +173,7 @@ async def teams_of_user(db, guild_id, user_id: str) -> list:
 # ───────── matches ─────────
 async def log_match(db, guild_id, home: dict, away: dict | None, home_score: int, away_score: int, competition: str | None = None,
                     played_at: datetime | None = None, notes: str = "", apply_record: bool = False, actor="",
-                    away_name: str = "") -> tuple[dict, list]:
+                    away_name: str = "", ff: dict | None = None) -> tuple[dict, list]:
     """Store a match; optionally add the win/loss/tie to the teams involved. `away` is None when the opponent isn't a
     team in the dashboard — `away_name` then names it, and a record update can only touch the home team. Returns
     (match doc, [updated team docs])."""
@@ -187,6 +187,8 @@ async def log_match(db, guild_id, home: dict, away: dict | None, home_score: int
            "created_at": _now(), "created_by": str(actor)}
     if not away:
         doc["away_name"] = opponent
+    if ff:  # Football Fusion game stats imported with the match
+        doc["ff"] = ff
     doc["_id"] = (await db.matches.insert_one(doc)).inserted_id
     updated = []
     if apply_record:

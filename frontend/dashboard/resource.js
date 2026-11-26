@@ -3,6 +3,7 @@
 import { state, can } from "./state.js";
 import { g } from "./api.js";
 import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, errorBox, pageHead, plain } from "./ui.js";
+import { showFusion } from "./fusion.js";
 
 const isoToLocalInput = (iso) => {
   if (!iso) return "";
@@ -118,6 +119,7 @@ function cell(spec, col, row) {
   if (col === "channel_id") return nameOfChannel(v);
   if (col === "role_id" || col === "ping_role_id" || col === "required_role_id") return nameOfRole(v);
   if (typeof v === "boolean") return v ? "✓" : "✗";
+  if (col === "ff") return h("button", { class: "btn small", onclick: () => showFusion(row.ff) }, "Stats");
   if (col === "user_id" || col === "author_id" || col.endsWith("_user_id")) return row[col.replace("_id", "_name")] || row.username || String(v);
   if (col === "logo" || col === "image") return h("a", { href: v, target: "_blank", rel: "noopener noreferrer" }, "view");
   if (Array.isArray(v)) return v.join(", ");

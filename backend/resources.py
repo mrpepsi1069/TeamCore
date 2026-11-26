@@ -310,12 +310,21 @@ async def c_panels(ctx, spec, data):
 
 async def c_stats(ctx, spec, data):
     t = data["type"]
-    team = None
+    team = league = None
     if t == "team":
         if data.get("team_id") is None:
             err("Pick a team for a team-record statistic.")
         team = await team_of(ctx, data["team_id"])
         key = f"team:{team['team_id']}"
+    elif t == "rings_league":
+        name = (data.get("league") or "").strip()
+        if not name:
+            err("Give the league for a rings-by-league statistic (its abbreviation, e.g. NFA).")
+        league = await coll("leagues").find_one({"guild_id": ctx.guild_id, "$or": [
+            {"league_abbr": name.upper()}, {"league_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}]})
+        if not league:
+            err(f"No league called {name} — create it with /league add first.")
+        key = f"league:{league['league_abbr'].lower()}"
     elif t == "custom":
         if not data.get("label"):
             err("Custom statistics need a name.")
@@ -327,6 +336,8 @@ async def c_stats(ctx, spec, data):
     doc = {"guild_id": ctx.guild_id, "key": key, "type": t, "channel_id": None, "template": data.get("template"), "last_name": None}
     if team:
         doc["team_id"] = team["team_id"]
+    if league:
+        doc.update(league=league["league_abbr"], league_id=str(league["_id"]))
     if t == "custom":
         doc.update(label=data["label"], value=data.get("value") or "")
     doc["_id"] = (await coll("stats_channels").insert_one(doc)).inserted_id

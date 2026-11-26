@@ -18,6 +18,7 @@ DEFAULT_TEMPLATES = {
     "team": "🏆 {name}: {record}",
     "record": "🏆 Overall: {record} · {pct}",
     "rings": "💍 Rings: {value}",
+    "rings_league": "💍 {league} rings: {value}",
     "custom": "{name}: {value}",
 }
 STAT_CHOICES = [
@@ -28,6 +29,7 @@ STAT_CHOICES = [
     app_commands.Choice(name="Team record", value="team"),
     app_commands.Choice(name="Overall team record (all leagues)", value="record"),
     app_commands.Choice(name="Championship rings", value="rings"),
+    app_commands.Choice(name="Rings by league", value="rings_league"),
     app_commands.Choice(name="Custom", value="custom"),
 ]
 CATEGORY_NAME = "📊 Server Stats"
@@ -46,9 +48,11 @@ def render_template(template: str, values: dict) -> str:
         return template[:100] or "stat"
 
 
-def make_key(stat: str, team_id=None, custom_name: str = None) -> str:
+def make_key(stat: str, team_id=None, custom_name: str = None, league: str = None) -> str:
     if stat == "team":
         return f"team:{team_id}"
+    if stat == "rings_league":
+        return f"league:{(league or '').strip().lower()}"
     if stat == "custom":
         return f"custom:{(custom_name or '').strip().lower()}"
     return stat
@@ -78,6 +82,18 @@ async def compute_values(guild: discord.Guild, cfg: dict) -> dict | None:
         q = {"guild_id": str(guild.id)}
         count = await db.col("championship_rings").count_documents(q)
         return {"value": str(count), "rings": str(count), "leagues": str(len(await db.col("championship_rings").distinct("league_id", q)))}
+    if t == "rings_league":
+        abbr = (cfg.get("league") or "").strip()
+        league = await db.get_league_by_abbr(str(guild.id), abbr.upper()) if abbr else None
+        if not league and abbr:
+            league = next((l for l in await db.get_leagues(str(guild.id)) if str(l.get("league_name", "")).lower() == abbr.lower()), None)
+        if not league:
+            return None
+        q = {"guild_id": str(guild.id), "league_id": str(league["_id"])}
+        count = await db.col("championship_rings").count_documents(q)
+        seasons = await db.col("championship_rings").distinct("season", q)
+        return {"value": str(count), "rings": str(count), "league": league.get("league_abbr") or abbr,
+                "seasons": str(len(seasons))}
     return None
 
 
@@ -199,15 +215,17 @@ class Stats(commands.Cog):
         made = [await self._add(interaction.guild, "members"), await self._add(interaction.guild, "boosts")]
         await interaction.followup.send(embed=success_embed("Stats Ready", "\n".join(m for m in made if m) or "Already set up."), ephemeral=True)
 
-    async def _add(self, guild, stat, team=None, custom_name=None, custom_value=None, template=None):
+    async def _add(self, guild, stat, team=None, custom_name=None, custom_value=None, template=None, league=None):
         """Returns a status line, or None if it already existed."""
         gid = str(guild.id)
-        key = make_key(stat, team["team_id"] if team else None, custom_name)
+        key = make_key(stat, team["team_id"] if team else None, custom_name, league)
         if await db.col("stats_channels").find_one({"guild_id": gid, "key": key}):
             return None
         cfg = {"guild_id": gid, "key": key, "type": stat, "channel_id": None, "template": template or None}
         if team:
             cfg["team_id"] = team["team_id"]
+        if stat == "rings_league":
+            cfg["league"] = league
         if stat == "custom":
             cfg.update(label=custom_name.strip(), value=custom_value or "")
         r = await db.col("stats_channels").insert_one(cfg)
@@ -221,7 +239,8 @@ class Stats(commands.Cog):
     @app_commands.choices(stat=STAT_CHOICES)
     @app_commands.autocomplete(team=team_autocomplete)
     async def add(self, interaction: discord.Interaction, stat: str, team: str = None, custom_name: app_commands.Range[str, 1, 40] = None,
-                  custom_value: app_commands.Range[str, 0, 60] = None, template: app_commands.Range[str, 1, 100] = None):
+                  custom_value: app_commands.Range[str, 0, 60] = None, template: app_commands.Range[str, 1, 100] = None,
+                  league: app_commands.Range[str, 1, 20] = None):
         if not await self._admin(interaction):
             return
         t = None
@@ -229,27 +248,36 @@ class Stats(commands.Cog):
             t = await get_team(interaction.guild_id, team)
             if not t:
                 return await interaction.response.send_message(embed=error_embed("Team Needed", "Pick an existing team in the `team` option."), ephemeral=True)
+        if stat == "rings_league":
+            if not league:
+                return await interaction.response.send_message(embed=error_embed("League Needed", "Rings by league needs the `league` option (its abbreviation)."), ephemeral=True)
+            found = await db.get_league_by_abbr(str(interaction.guild_id), league) or next(
+                (l for l in await db.get_leagues(str(interaction.guild_id)) if str(l.get("league_name", "")).lower() == league.lower()), None)
+            if not found:
+                return await interaction.response.send_message(embed=error_embed("League Not Found", f"No league called **{league}** — create it with `/league add`."), ephemeral=True)
+            league = found["league_abbr"]
         if stat == "custom" and not custom_name:
             return await interaction.response.send_message(embed=error_embed("Name Needed", "Custom stats need a `custom_name`."), ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         try:
-            line = await self._add(interaction.guild, stat, t, custom_name, custom_value, template)
+            line = await self._add(interaction.guild, stat, t, custom_name, custom_value, template, league)
         except discord.Forbidden:
             return await interaction.followup.send(embed=error_embed("Missing Permission", "I need **Manage Channels**."), ephemeral=True)
         await interaction.followup.send(embed=success_embed("Stats Channel", line or "That stat already exists — use `/stats config` to change it."), ephemeral=True)
 
-    async def _find(self, interaction, stat, team, custom_name):
+    async def _find(self, interaction, stat, team, custom_name, league=None):
         t = await get_team(interaction.guild_id, team) if stat == "team" else None
-        key = make_key(stat, t["team_id"] if t else None, custom_name)
+        key = make_key(stat, t["team_id"] if t else None, custom_name, league)
         return await db.col("stats_channels").find_one({"guild_id": str(interaction.guild_id), "key": key})
 
     @group.command(name="remove", description="Remove a stats channel")
     @app_commands.choices(stat=STAT_CHOICES)
     @app_commands.autocomplete(team=team_autocomplete)
-    async def remove(self, interaction: discord.Interaction, stat: str, team: str = None, custom_name: str = None):
+    async def remove(self, interaction: discord.Interaction, stat: str, team: str = None, custom_name: str = None,
+                     league: str = None):
         if not await self._admin(interaction):
             return
-        cfg = await self._find(interaction, stat, team, custom_name)
+        cfg = await self._find(interaction, stat, team, custom_name, league)
         if not cfg:
             return await interaction.response.send_message(embed=error_embed("Not Found", "No such stats channel is configured."), ephemeral=True)
         ch = interaction.guild.get_channel(int(cfg["channel_id"])) if cfg.get("channel_id") else None
@@ -266,7 +294,8 @@ class Stats(commands.Cog):
     @app_commands.choices(stat=STAT_CHOICES)
     @app_commands.autocomplete(team=team_autocomplete)
     async def config(self, interaction: discord.Interaction, stat: str = None, team: str = None, custom_name: str = None,
-                     template: app_commands.Range[str, 1, 100] = None, value: app_commands.Range[str, 0, 60] = None):
+                     template: app_commands.Range[str, 1, 100] = None, value: app_commands.Range[str, 0, 60] = None,
+                     league: str = None):
         if not await self._admin(interaction):
             return
         if stat is None:
@@ -277,7 +306,7 @@ class Stats(commands.Cog):
             e = brand("⚙️ Stats Channels", "\n".join(lines) or "None yet.")
             e.add_field(name="Placeholders", value="`{value}` `{name}` `{wins}` `{losses}` `{ties}` `{record}` `{pct}` `{teams}` `{rings}` `{leagues}` `{tier}`", inline=False)
             return await interaction.response.send_message(embed=e, ephemeral=True)
-        cfg = await self._find(interaction, stat, team, custom_name)
+        cfg = await self._find(interaction, stat, team, custom_name, league)
         if not cfg:
             return await interaction.response.send_message(embed=error_embed("Not Found", "No such stats channel is configured."), ephemeral=True)
         updates = {}

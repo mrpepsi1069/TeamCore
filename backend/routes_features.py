@@ -15,7 +15,8 @@ from backend.deps import Ctx, guild_ctx
 from database import teams as T
 from backend.db import db as handle
 from backend.resources import bump_team, channel_ok, finish, notify_records, role_ok
-from backend.util import now, ser
+from backend.util import now, oid, ser
+from shared.fusion import parse_report
 
 router = APIRouter(prefix="/api/guilds/{gid}", tags=["features"])
 
@@ -93,6 +94,32 @@ async def record_history(team_id: int, ctx: Ctx = Depends(guild_ctx)):
     return {"items": ser(rows)}
 
 
+def _note_fields(body: dict) -> dict:
+    """Validate a timeline note; returns {note, timestamp?} where timestamp defaults to now."""
+    note = str(body.get("note") or "").strip()
+    if not note:
+        raise HTTPException(422, {"errors": {"note": "Write something first."}})
+    if len(note) > 500:
+        raise HTTPException(422, {"errors": {"note": "Max 500 characters."}})
+    out = {"note": note, "timestamp": now()}
+    if body.get("happened_at"):
+        try:
+            ts = datetime.fromisoformat(str(body["happened_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, {"errors": {"happened_at": "Use a valid date and time."}})
+        out["timestamp"] = ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return out
+
+
+async def _note_or_404(team_id: int, item_id: str, ctx: Ctx) -> dict:
+    doc = await coll("team_history").find_one({"_id": oid(item_id), "guild_id": ctx.guild_id, "team_id": team_id})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    if doc.get("action") != "note":
+        raise HTTPException(409, "Only timeline notes can be changed — record history stays as it happened.")
+    return doc
+
+
 @router.post("/teams/{team_id}/history")
 async def add_team_note(team_id: int, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
     """Add a dated note to a team's timeline (Teams → History) — anything that happened, on the day it happened."""
@@ -100,23 +127,85 @@ async def add_team_note(team_id: int, body: dict = Body(...), ctx: Ctx = Depends
     team = await coll("teams").find_one({"guild_id": ctx.guild_id, "team_id": team_id})
     if not team:
         raise HTTPException(404, "Team not found")
-    note = str(body.get("note") or "").strip()
-    if not note:
-        raise HTTPException(422, {"errors": {"note": "Write something first."}})
-    if len(note) > 500:
-        raise HTTPException(422, {"errors": {"note": "Max 500 characters."}})
-    ts = now()
-    if body.get("happened_at"):
-        try:
-            ts = datetime.fromisoformat(str(body["happened_at"]).replace("Z", "+00:00"))
-        except ValueError:
-            raise HTTPException(422, {"errors": {"happened_at": "Use a valid date and time."}})
-        ts = ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-    doc = {"guild_id": ctx.guild_id, "team_id": team_id, "team_name": team["name"], "action": "note", "note": note,
-           "by": ctx.user["user_id"], "by_name": ctx.user.get("username") or "", "timestamp": ts, "created_at": now()}
+    fields = _note_fields(body)
+    doc = {"guild_id": ctx.guild_id, "team_id": team_id, "team_name": team["name"], "action": "note",
+           "by": ctx.user["user_id"], "by_name": ctx.user.get("username") or "", "created_at": now(), **fields}
     doc["_id"] = (await coll("team_history").insert_one(doc)).inserted_id
-    await audit.log(ctx, "team.note", f"{team['name']}: {note[:60]}")
+    await audit.log(ctx, "team.note", f"{team['name']}: {fields['note'][:60]}")
     return {"item": ser(doc)}
+
+
+@router.patch("/teams/{team_id}/history/{item_id}")
+async def edit_team_note(team_id: int, item_id: str, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Fix a note's text or date (record history rows are never editable)."""
+    ctx.require("staff")
+    doc = await _note_or_404(team_id, item_id, ctx)
+    updates = {**_note_fields(body), "edited_at": now(), "edited_by": ctx.user["user_id"]}
+    if not body.get("happened_at"):
+        updates.pop("timestamp", None)  # keep the note's date unless a new one is given
+    await coll("team_history").update_one({"_id": doc["_id"]}, {"$set": updates})
+    await audit.log(ctx, "team.note.edit", f"{doc.get('team_name', '')}: {updates['note'][:60]}")
+    return {"item": ser(await coll("team_history").find_one({"_id": doc["_id"]}))}
+
+
+@router.delete("/teams/{team_id}/history/{item_id}")
+async def delete_team_note(team_id: int, item_id: str, ctx: Ctx = Depends(guild_ctx)):
+    ctx.require("staff")
+    doc = await _note_or_404(team_id, item_id, ctx)
+    await coll("team_history").delete_one({"_id": doc["_id"]})
+    await audit.log(ctx, "team.note.delete", f"{doc.get('team_name', '')}: {str(doc.get('note') or '')[:60]}")
+    return {"ok": True}
+
+
+def _report_team(name: str, teams: list) -> dict | None:
+    """Match a report's team name (often a full college name) to a dashboard team, exact first, then unique overlap."""
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    exact = [t for t in teams if (t.get("name_lower") or t.get("name", "").lower()) == key]
+    if len(exact) == 1:
+        return exact[0]
+    near = [t for t in teams if t.get("name_lower") and (key in t["name_lower"] or t["name_lower"] in key)]
+    return near[0] if len(near) == 1 else None
+
+
+@router.post("/matches/import")
+async def import_fusion_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Import a Football Fusion game report as a match, storing its full stat sheet on the match."""
+    ctx.require("staff")
+    try:
+        game = parse_report(str(body.get("report") or ""))
+    except ValueError as e:
+        raise HTTPException(422, {"errors": {"report": str(e)}})
+    teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
+    side = game["score"]
+    home, away = _report_team(side["home"], teams), _report_team(side["away"], teams)
+    if not home and not away:
+        raise HTTPException(422, {"errors": {"report": f"Neither “{side['home']}” nor “{side['away']}” matches a team in the dashboard — add one of them first."}})
+    hs, as_ = side["home_score"], side["away_score"]
+    away_name = ""
+    if home:
+        away_name = "" if away else side["away"]
+    else:  # the dashboard team was the second side, so it becomes home and the scores swap
+        home, away, away_name = away, None, side["home"]
+        hs, as_ = as_, hs
+    picked = now()
+    if body.get("played_at"):
+        try:
+            picked = datetime.fromisoformat(str(body["played_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, {"errors": {"played_at": "Use a valid date and time."}})
+        picked = picked.astimezone(timezone.utc) if picked.tzinfo else picked.replace(tzinfo=timezone.utc)
+    try:
+        doc, updated = await T.log_match(handle(), ctx.guild_id, home, away, hs, as_, body.get("competition") or home.get("competition"),
+                                         picked, "", bool(body.get("apply_record")), ctx.user["user_id"], away_name=away_name, ff=game)
+    except T.TeamError as e:
+        raise HTTPException(422, {"errors": {"report": str(e)}})
+    for t in updated:
+        await notify_records(ctx, t["team_id"])
+    opponent = away["name"] if away else away_name
+    await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({game.get('game') or 'Football Fusion'})")
+    return {"item": ser(doc), "notice": f"Imported {game.get('game') or 'the match'}: {home['name']} {hs}–{as_} {opponent}."}
 
 
 @router.get("/leaderboard")
