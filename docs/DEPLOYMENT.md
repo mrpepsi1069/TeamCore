@@ -22,6 +22,7 @@ Cloudflare Pages, Netlify, Vercel etc.: publish the `frontend/` folder (no build
 Any Python host (Render, Railway, Fly.io, a VPS…). Install `backend/requirements.txt`.
 * Start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 * Environment: `MONGODB_URI`, `MONGODB_DB`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `BACKEND_URL`, `FRONTEND_URL`, `DATA_ENCRYPTION_KEY` (+ optional `ALLOWED_ORIGINS`, `SESSION_TTL_DAYS`).
+* Screenshot reading (optional, for importing match screenshots): either `GOOGLE_VISION_API_KEY` (Cloud Vision API enabled on that key's project) or `AZURE_DOC_ENDPOINT` + `AZURE_DOC_KEY` (Azure AI Document Intelligence, `prebuilt-layout`). Set `OCR_PROVIDER=google|azure` only when both are configured; otherwise the one with keys is used. Keys stay on the backend — the dashboard uploads the image to the API.
 * **Do not** set `DISCORD_TOKEN` here. Serve it over HTTPS only (Discord requires an HTTPS redirect URI outside localhost).
 * Free hosts sleep when idle — the first request after a nap takes ~30 s. The site shows a loading state; use a paid instance for production.
 * Health check: `GET /health`.

@@ -324,6 +324,57 @@ class DashboardBridge(commands.Cog):
         self.bot.dispatch("team_record_changed", str(guild.id), p["team_id"])
         return {}
 
+    async def job_post_result(self, guild, p, job):
+        """Post an imported match's summary (and its game stats) to the server's results channel."""
+        from bson import ObjectId
+        from shared.fusion import stat_line
+        from shared.scan import SPORTS
+        cfg = await db.get_guild_config(str(guild.id)) or {}
+        cid = cfg.get("results_channel")
+        if not cid:
+            return {"posted": False}   # posting results is opt-in — no channel, nothing to do
+        try:
+            d = await db.col("matches").find_one({"guild_id": str(guild.id), "_id": ObjectId(str(p["match_id"]))})
+        except Exception:
+            d = None
+        if not d:
+            raise JobError("That match no longer exists.")
+        names = {t["team_id"]: t["name"] for t in await db.col("teams").find({"guild_id": str(guild.id)}).to_list(None)}
+        ff = d.get("ff") or {}
+        side = ff.get("score") or {}
+        home = names.get(d.get("home_team_id")) or side.get("home") or "Home"
+        away = names.get(d.get("away_team_id")) or d.get("away_name") or side.get("away") or "Away"
+        e = discord.Embed(title=f"🏟️ {_label(ff.get('game'), 240) or 'Match result'}", colour=0x57F287,
+                          description=f"**{home}** {d['home_score']} – {d['away_score']} **{away}**",
+                          timestamp=d.get("played_at") or _now())
+        e.add_field(name="Sport", value=SPORTS.get(ff.get("sport") or "ff", SPORTS["ff"]), inline=True)
+        if d.get("competition"):
+            e.add_field(name="Competition", value=str(d["competition"])[:100], inline=True)
+        if d.get("record_applied"):
+            e.add_field(name="Records", value="Updated ✅", inline=True)
+        rep = ff.get("reporter")
+        if rep:
+            value = str(rep.get("name") or "—")
+            if rep.get("display") and rep["display"] != value:
+                value += f" ({rep['display']})"
+            e.add_field(name="Reported by", value=value[:100], inline=True)
+        lines = []
+        for pl in (ff.get("players") or [])[:8]:
+            blocks = [f"**{pos}** {stat_line(st)}" for pos, st in (pl.get("positions") or {}).items() if st]
+            if not blocks and pl.get("stats"):
+                blocks = [stat_line(pl["stats"])]
+            if blocks:
+                lines.append(f"**{pl.get('name') or '?'}** — " + " · ".join(blocks))
+        if lines:
+            e.add_field(name="Player stats", value="\n".join(lines)[:1024], inline=False)
+        if ff.get("total"):
+            e.set_footer(text=f"{guild.name} · {ff.get('linked') or 0}/{ff.get('total')} players linked")
+        else:
+            e.set_footer(text=guild.name)
+        ch = self._text(guild, cid)
+        msg = await ch.send(embed=e)
+        return {"posted": True, "message": msg.jump_url}
+
     async def job_stats_refresh(self, guild, p, job):
         cog = self.bot.get_cog("Stats")
         if cog:

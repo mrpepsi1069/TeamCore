@@ -1,5 +1,6 @@
 """backend/routes_features.py — records, leaderboard, activity, member stats, backups, locks, verification, exports."""
 
+import base64
 import csv
 import io
 import json
@@ -16,7 +17,8 @@ from database import teams as T
 from backend.db import db as handle
 from backend.resources import bump_team, channel_ok, finish, notify_records, role_ok
 from backend.util import now, oid, ser
-from shared.fusion import parse_report
+from backend.ocr import configured as ocr_configured, extract_text, pick as ocr_pick
+from shared.scan import SPORTS, parse_any
 
 router = APIRouter(prefix="/api/guilds/{gid}", tags=["features"])
 
@@ -169,12 +171,55 @@ def _report_team(name: str, teams: list) -> dict | None:
     return near[0] if len(near) == 1 else None
 
 
-@router.post("/matches/import")
-async def import_fusion_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
-    """Import a Football Fusion game report as a match, storing its full stat sheet on the match."""
-    ctx.require("staff")
+def _image(body: dict) -> tuple[bytes, str]:
+    """Accept a data URL or bare base64 from the browser and return (bytes, mime)."""
+    raw = str(body.get("image") or "")
+    mime = str(body.get("mime") or "image/png")
+    if raw.startswith("data:"):
+        head, _, raw = raw.partition(",")
+        mime = head[5:].split(";")[0] or mime
     try:
-        game = parse_report(str(body.get("report") or ""))
+        data = base64.b64decode(raw, validate=False)
+    except (ValueError, TypeError):
+        raise HTTPException(422, {"errors": {"image": "That image couldn't be read — try a PNG or JPEG screenshot."}})
+    if not data:
+        raise HTTPException(422, {"errors": {"image": "Add a screenshot first."}})
+    return data, mime
+
+
+@router.get("/matches/scan")
+async def scan_providers(ctx: Ctx = Depends(guild_ctx)):
+    """Which OCR providers this backend can use (so the dashboard can say so before an upload)."""
+    conf = ocr_configured()
+    return {"providers": conf, "default": ocr_pick(None) if any(conf.values()) else None}
+
+
+@router.post("/matches/scan")
+async def scan_screenshot(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Read a screenshot and hand the text back for review — nothing is saved until the match is imported."""
+    ctx.require("staff")
+    sport = str(body.get("sport") or "ff").strip().lower()
+    if sport not in SPORTS:
+        raise HTTPException(422, {"errors": {"sport": "Pick Football Fusion, Practical Basketball or Ultimate Football."}})
+    data, mime = _image(body)
+    text, provider = await extract_text(data, mime, body.get("provider"))
+    parsed, problem = None, None
+    try:
+        parsed = parse_any(text, sport)
+    except ValueError as e:
+        problem = str(e)  # the text is still returned, so the manager can fix a misread by hand
+    return {"text": text[:20000], "provider": provider, "sport": sport, "parsed": parsed, "problem": problem}
+
+
+@router.post("/matches/import")
+async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Import a Football Fusion report or a scanned box score as a match, storing its full stat sheet on the match."""
+    ctx.require("staff")
+    sport = str(body.get("sport") or "ff").strip().lower()
+    if sport not in SPORTS:
+        raise HTTPException(422, {"errors": {"sport": "Pick Football Fusion, Practical Basketball or Ultimate Football."}})
+    try:
+        game = parse_any(str(body.get("report") or body.get("text") or ""), sport)
     except ValueError as e:
         raise HTTPException(422, {"errors": {"report": str(e)}})
     teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
@@ -204,7 +249,11 @@ async def import_fusion_match(body: dict = Body(...), ctx: Ctx = Depends(guild_c
     for t in updated:
         await notify_records(ctx, t["team_id"])
     opponent = away["name"] if away else away_name
-    await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({game.get('game') or 'Football Fusion'})")
+    await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({game.get('game') or SPORTS[sport]})")
+    # Post the result to the results channel, without making the manager wait for Discord. No channel, no job.
+    cfg = await coll("guild_config").find_one({"guild_id": ctx.guild_id}, {"results_channel": 1})
+    if cfg and cfg.get("results_channel"):
+        await bridge.run_job(ctx.guild_id, "post_result", {"match_id": str(doc["_id"])}, ctx.user["user_id"], wait=0)
     return {"item": ser(doc), "notice": f"Imported {game.get('game') or 'the match'}: {home['name']} {hs}–{as_} {opponent}."}
 
 

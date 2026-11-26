@@ -30,6 +30,7 @@ CHANNEL_KEYS = {
     "contract_channel":    "Contract Channel",
     "awards_channel":      "Awards Channel",
     "league_log_channel":  "League Log Channel",
+    "results_channel":     "Results Channel",
 }
 
 
@@ -204,6 +205,10 @@ class SetupView(discord.ui.View):
     @discord.ui.button(label="League Log Channel", style=discord.ButtonStyle.primary, emoji="🏈", row=3)
     async def set_league_log(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_select(interaction, ChannelSelect("league_log_channel", "League Log Channel", self))
+
+    @discord.ui.button(label="Results Channel", style=discord.ButtonStyle.primary, emoji="📣", row=3)
+    async def set_results(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.send_select(interaction, ChannelSelect("results_channel", "Results Channel", self))
 
     # RESET
 

@@ -20,6 +20,7 @@ JOB_TYPES = {
     "suggestion_decide": ["suggestion_id", "status"],
     "send_embed": ["channel_id"],
     "record_changed": ["team_id"],
+    "post_result": ["match_id"],              # post a match's summary (and its game stats) to the results channel
     "stats_refresh": [],
     "stats_remove": ["key"],
     "channel_lock": ["channel_id", "locked"],

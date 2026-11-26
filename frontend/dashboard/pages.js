@@ -62,6 +62,7 @@ const LABELS = {
   log_channel: "Log channel", announce_channel: "Announcements channel", gametime_channel: "Gametime channel",
   matchmaking_channel: "Matchmaking channel", contract_channel: "Contract channel", awards_channel: "Awards channel",
   league_log_channel: "League log channel", suggestion_channel: "Suggestions channel", memberstats_channel: "Member report channel",
+  results_channel: "Results channel (imported matches are posted here)",
   verify_channel: "Verification channel", activity_enabled: "Track message activity",
   activity_channels: "Only track these channels (empty = all)", timezone: "Server timezone",
 };
@@ -92,7 +93,7 @@ export function settingsPage(c) {
     const { settings } = await g("/settings");
     const keys = ["admin_role", "franchise_owner_role", "general_manager_role", "head_coach_role", "assistant_coach_role",
       "log_channel", "announce_channel", "gametime_channel", "matchmaking_channel", "contract_channel", "awards_channel",
-      "league_log_channel", "suggestion_channel", "memberstats_channel", "activity_enabled", "activity_channels", "timezone"];
+      "league_log_channel", "suggestion_channel", "memberstats_channel", "results_channel", "activity_enabled", "activity_channels", "timezone"];
     const { form, read } = settingsForm(keys, settings);
     const save = h("button", { class: "btn primary", disabled: !can("admin") || null, onclick: async (e) => {
       e.target.disabled = true;
@@ -353,28 +354,76 @@ async function rostersBody(el) {
   return renderResource(body, "team_members", { embedded: true });
 }
 
-// ───────── matches: import a Football Fusion report ─────────
-function openFusionImport(onSaved) {
-  const report = h("textarea", { rows: 8, maxLength: 20000, placeholder: "Paste the whole Football Fusion game report, starting with “Game Report • …”" });
+// ───────── matches: import a report, or scan a screenshot ─────────
+const SPORT_NAMES = { ff: "Football Fusion", pb: "Practical Basketball", uf: "Ultimate Football" };
+
+function openStatsImport(onSaved) {
+  const sport = h("select", {}, Object.entries(SPORT_NAMES).map(([v, l]) => opt(v, l)));
+  const report = h("textarea", { rows: 9, maxLength: 20000, placeholder: "Paste the Football Fusion game report, or scan a screenshot and review the text here." });
+  const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp" });
+  const scan = h("button", { class: "btn small", type: "button" }, "Read screenshot");
+  const scanNote = h("div", { class: "help" });
   const when = h("input", { id: "ff-when", type: "datetime-local", value: localDateTime(new Date()) });
   const records = h("input", { type: "checkbox" });
   const err = h("div", { class: "err" });
-  modal("Import Football Fusion report", h("div", {},
-    h("div", { class: "field" }, h("label", {}, "Game report"), report,
-      h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the report's score is used as-is. An unknown opponent is kept as a plain name."), err),
+
+  const read = async () => {
+    err.textContent = "";
+    const shot = file.files && file.files[0];
+    if (!shot) { err.textContent = "Choose a screenshot first."; return; }
+    if (shot.size > 6 * 1024 * 1024) { err.textContent = "That screenshot is over 6 MB — crop it or take a smaller one."; return; }
+    scan.disabled = true;
+    scanNote.textContent = "Reading the screenshot…";
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(new Error("That file couldn't be read."));
+        r.readAsDataURL(shot);
+      });
+      const res = await g("/matches/scan", { method: "POST", body: { image, sport: sport.value } });
+      report.value = res.text || "";
+      scanNote.textContent = res.problem
+        ? `Read with ${res.provider}, but ${res.problem.charAt(0).toLowerCase()}${res.problem.slice(1)} Fix the text above before importing.`
+        : `Read with ${res.provider} — check the score and stat lines before importing.`;
+    } catch (e) {
+      err.textContent = e.errors?.image || e.errors?.sport || e.message;
+      scanNote.textContent = "";
+    }
+    scan.disabled = false;
+  };
+  scan.addEventListener("click", read);
+
+  const box = h("div", {},
+    h("div", { class: "field" }, h("label", {}, "Sport"), sport,
+      h("div", { class: "help" }, "Football Fusion reads its game report; the other two are read from a screenshot of the box score.")),
+    h("div", { class: "field" }, h("label", {}, "Screenshot"), h("div", { class: "row" }, file, scan), scanNote),
+    h("div", { class: "field" }, h("label", {}, "Game report / scanned text"), report,
+      h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the score is used as-is. An unknown opponent is kept as a plain name."), err),
     h("div", { class: "field" }, h("label", { for: "ff-when" }, "When it was played"), when),
-    h("label", { class: "row" }, records, " Also update team records")),
+    h("label", { class: "row" }, records, " Also update team records"));
+
+  g("/matches/scan").then((res) => {
+    if (!res.providers || !Object.values(res.providers).some(Boolean)) {
+      scan.disabled = true;
+      scanNote.textContent = "Screenshot reading isn't set up on the backend yet — paste the text instead, or ask an admin to add an OCR key.";
+    } else if (!res.providers[res.default]) {
+      scan.disabled = true;
+    }
+  }).catch(() => {});
+
+  modal("Import game stats", box,
     [{ label: "Cancel", onClick: (c) => c() },
       { label: "Import match", cls: "primary", onClick: async (c, btns) => {
         err.textContent = "";
-        if (!report.value.trim()) { err.textContent = "Paste the report first."; return; }
+        if (!report.value.trim()) { err.textContent = "Paste the report or scan a screenshot first."; return; }
         btns.forEach((b) => (b.disabled = true));
         try {
-          const res = await g("/matches/import", { method: "POST", body: { report: report.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked } });
+          const res = await g("/matches/import", { method: "POST", body: { sport: sport.value, report: report.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked } });
           c(); toast(res.notice || "Match imported", res.queued ? "warn" : "");
           onSaved?.();
         } catch (e) {
-          err.textContent = e.errors?.report || e.errors?.played_at || e.message;
+          err.textContent = e.errors?.report || e.errors?.played_at || e.errors?.sport || e.message;
           btns.forEach((b) => (b.disabled = false));
         }
       } }], { wide: true });
@@ -386,9 +435,9 @@ async function matchesBody(el) {
   const spec = state.specs.matches;
   const body = h("div", {});
   el.append(h("div", { class: "row" },
-    h("p", { class: "page-sub" }, "Log a match against any opponent, or import a Football Fusion report to attach its full stat sheet. Matches with a report get a Stats button."),
+    h("p", { class: "page-sub" }, "Log a match against any opponent, import a Football Fusion report, or scan a Practical Basketball / Ultimate Football screenshot. Matches with game stats get a Stats button."),
     h("span", { class: "spacer" }),
-    spec && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openFusionImport(reload) }, "Import FF report") : null),
+    spec && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openStatsImport(reload) }, "Import game stats") : null),
     body);
   return renderResource(body, "matches", { embedded: true });
 }

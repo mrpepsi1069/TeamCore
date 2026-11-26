@@ -18,7 +18,7 @@ router = APIRouter(tags=["guild"])
 
 ROLE_KEYS = ["admin_role", "franchise_owner_role", "general_manager_role", "head_coach_role", "assistant_coach_role"]
 CHANNEL_KEYS = ["log_channel", "announce_channel", "gametime_channel", "matchmaking_channel", "contract_channel", "awards_channel",
-                "league_log_channel", "suggestion_channel", "memberstats_channel", "verify_channel"]
+                "league_log_channel", "suggestion_channel", "memberstats_channel", "verify_channel", "results_channel"]
 SETTING_FIELDS = (
     [{"key": k, "type": "role"} for k in ROLE_KEYS + ["verify_role"]]
     + [{"key": k, "type": "channel"} for k in CHANNEL_KEYS]
