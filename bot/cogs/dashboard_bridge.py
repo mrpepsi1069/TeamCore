@@ -325,7 +325,10 @@ class DashboardBridge(commands.Cog):
         return {}
 
     async def job_post_result(self, guild, p, job):
-        """Post an imported match's summary (and its game stats) to the server's results channel."""
+        return await self.post_result(guild, p["match_id"])
+
+    async def post_result(self, guild, match_id) -> dict:
+        """Post one match's summary (and its game stats, when it has them) to the server's results channel."""
         from bson import ObjectId
         from shared.fusion import stat_line
         from shared.scan import SPORTS
@@ -334,7 +337,7 @@ class DashboardBridge(commands.Cog):
         if not cid:
             return {"posted": False}   # posting results is opt-in — no channel, nothing to do
         try:
-            d = await db.col("matches").find_one({"guild_id": str(guild.id), "_id": ObjectId(str(p["match_id"]))})
+            d = await db.col("matches").find_one({"guild_id": str(guild.id), "_id": ObjectId(str(match_id))})
         except Exception:
             d = None
         if not d:
@@ -347,7 +350,8 @@ class DashboardBridge(commands.Cog):
         e = discord.Embed(title=f"🏟️ {_label(ff.get('game'), 240) or 'Match result'}", colour=0x57F287,
                           description=f"**{home}** {d['home_score']} – {d['away_score']} **{away}**",
                           timestamp=d.get("played_at") or _now())
-        e.add_field(name="Sport", value=SPORTS.get(ff.get("sport") or "ff", SPORTS["ff"]), inline=True)
+        if ff.get("sport") in SPORTS:
+            e.add_field(name="Sport", value=SPORTS[ff["sport"]], inline=True)
         if d.get("competition"):
             e.add_field(name="Competition", value=str(d["competition"])[:100], inline=True)
         if d.get("record_applied"):

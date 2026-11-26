@@ -15,7 +15,7 @@ from backend.db import coll
 from backend.deps import Ctx, guild_ctx
 from database import teams as T
 from backend.db import db as handle
-from backend.resources import bump_team, channel_ok, finish, notify_records, role_ok
+from backend.resources import bump_team, channel_ok, finish, notify_records, post_result, role_ok
 from backend.util import now, oid, ser
 from backend.ocr import configured as ocr_configured, extract_text, pick as ocr_pick
 from shared.scan import SPORTS, parse_any
@@ -250,10 +250,7 @@ async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
         await notify_records(ctx, t["team_id"])
     opponent = away["name"] if away else away_name
     await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({game.get('game') or SPORTS[sport]})")
-    # Post the result to the results channel, without making the manager wait for Discord. No channel, no job.
-    cfg = await coll("guild_config").find_one({"guild_id": ctx.guild_id}, {"results_channel": 1})
-    if cfg and cfg.get("results_channel"):
-        await bridge.run_job(ctx.guild_id, "post_result", {"match_id": str(doc["_id"])}, ctx.user["user_id"], wait=0)
+    await post_result(ctx, doc["_id"])  # results channel, if the server has one — never blocks on Discord
     return {"item": ser(doc), "notice": f"Imported {game.get('game') or 'the match'}: {home['name']} {hs}–{as_} {opponent}."}
 
 

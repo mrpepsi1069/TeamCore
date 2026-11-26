@@ -40,6 +40,12 @@ class Match(commands.Cog):
             e.add_field(name="Notes", value=notes, inline=False)
         await interaction.response.send_message(embed=e)
         await send_mod_log(interaction.guild, e)
+        results = self.bot.get_cog("DashboardBridge")  # the results channel, when the server has one
+        if results:
+            try:
+                await results.post_result(interaction.guild, doc["_id"])
+            except Exception as err:
+                print(f"⚠️ results post failed: {err!r}")
         for t in updated:  # refresh live leaderboards + stat channels
             self.bot.dispatch("team_record_changed", str(interaction.guild_id), t["team_id"])
 

@@ -81,6 +81,15 @@ async def notify_records(ctx: Ctx, team_id: int) -> None:
     await bridge.run_job(ctx.guild_id, "record_changed", {"team_id": team_id}, ctx.user["user_id"], wait=0)
 
 
+async def post_result(ctx: Ctx, match_id) -> bool:
+    """Fire-and-forget: post a match to the server's results channel, when it has one. Returns whether it queued."""
+    cfg = await coll("guild_config").find_one({"guild_id": ctx.guild_id}, {"results_channel": 1})
+    if not (cfg and cfg.get("results_channel")):
+        return False
+    await bridge.run_job(ctx.guild_id, "post_result", {"match_id": str(match_id)}, ctx.user["user_id"], wait=0)
+    return True
+
+
 # ───────────── list enrichment (derived columns) ─────────────
 TEAM_NAMED = {"team_members", "player_profiles", "tryouts"}
 
@@ -210,6 +219,7 @@ async def c_matches(ctx, spec, data):
         err(str(e))
     for t in updated:
         await notify_records(ctx, t["team_id"])
+    await post_result(ctx, doc["_id"])
     return {"item": doc}
 
 

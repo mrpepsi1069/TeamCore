@@ -356,6 +356,8 @@ async function rostersBody(el) {
 
 // ───────── matches: import a report, or scan a screenshot ─────────
 const SPORT_NAMES = { ff: "Football Fusion", pb: "Practical Basketball", uf: "Ultimate Football" };
+const OCR_NAMES = { google: "Google Vision", azure: "Azure Document Intelligence", local: "Tesseract (no key)" };
+const ocrName = (name) => OCR_NAMES[name] || name || "the OCR service";
 
 function openStatsImport(onSaved) {
   const sport = h("select", {}, Object.entries(SPORT_NAMES).map(([v, l]) => opt(v, l)));
@@ -384,8 +386,8 @@ function openStatsImport(onSaved) {
       const res = await g("/matches/scan", { method: "POST", body: { image, sport: sport.value } });
       report.value = res.text || "";
       scanNote.textContent = res.problem
-        ? `Read with ${res.provider}, but ${res.problem.charAt(0).toLowerCase()}${res.problem.slice(1)} Fix the text above before importing.`
-        : `Read with ${res.provider} — check the score and stat lines before importing.`;
+        ? `Read with ${ocrName(res.provider)}, but ${res.problem.charAt(0).toLowerCase()}${res.problem.slice(1)} Fix the text above before importing.`
+        : `Read with ${ocrName(res.provider)} — check the score and stat lines before importing.`;
     } catch (e) {
       err.textContent = e.errors?.image || e.errors?.sport || e.message;
       scanNote.textContent = "";
@@ -406,7 +408,7 @@ function openStatsImport(onSaved) {
   g("/matches/scan").then((res) => {
     if (!res.providers || !Object.values(res.providers).some(Boolean)) {
       scan.disabled = true;
-      scanNote.textContent = "Screenshot reading isn't set up on the backend yet — paste the text instead, or ask an admin to add an OCR key.";
+      scanNote.textContent = "Screenshot reading isn't set up on the backend yet — paste the text instead, or ask an admin to install Tesseract (no key needed).";
     } else if (!res.providers[res.default]) {
       scan.disabled = true;
     }

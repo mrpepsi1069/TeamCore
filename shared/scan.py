@@ -42,7 +42,13 @@ def _keys(sport: str) -> tuple:
 
 def _lines(text: str) -> list[str]:
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
-    return [re.sub(r"[ \t]+", " ", line).strip() for line in raw.splitlines()]
+    out = []
+    for line in raw.splitlines():
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        if line and not re.search(r"[A-Za-z0-9]", line):
+            continue  # OCR junk such as a rule or a lone bullet
+        out.append(line)
+    return out
 
 
 def _number(token: str):
@@ -86,7 +92,7 @@ def _header(line: str, keys: tuple) -> list[str] | None:
 
 def _row(line: str, header: list[str]) -> dict | None:
     """„DrakioAlt 12 4 3” -> a player row; the trailing tokens are the header's columns in order."""
-    parts = line.split()
+    parts = line.replace("|", " ").split()  # table screenshots often draw column separators
     if len(parts) < 2:
         return None
     tail = []
