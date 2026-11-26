@@ -194,10 +194,12 @@ R("leagues", "Leagues", "", "Competition", "leagues",
   ["league_abbr", "league_name", "role_id", "team_count"], search=["league_name", "league_abbr"], sort=["league_name", 1],
   write="manager", delete="manager",
   help="The same leagues as /league add in Discord. Give a team a league by setting its league to this name.")
+DEFAULT_TEAM_COLOR = 0x5865F2   # the colour a team role gets when nobody picked one (Discord blurple)
+
 R("teams", "Teams", "", "Competition", "teams",
   [F("name", required=True, max=50), F("competition", picker="competition", max=50, default="General", label="League / competition"),
    F("division", picker="division", max=50), F("logo", "url"),
-   F("color", "color", "Team colour", default=0x5865F2, help="The bot creates a Discord role named after the team in this colour.")],
+   F("color", "color", "Team colour", default=DEFAULT_TEAM_COLOR, help="The bot creates a Discord role named after the team in this colour.")],
   ["name", "competition", "division", "record", "win_pct"], search=["name"], sort=["name_lower", 1],
   help="Change a record from the Teams tab of the Competition page so every change is logged.")
 R("team_members", "Rosters", "👥", "Competition", "team_members",

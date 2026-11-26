@@ -15,6 +15,7 @@ from utils.records import (
 )
 from utils.ui import ConfirmView, brand, send_paged
 from utils.validation import sanitize_input
+from shared.resources import DEFAULT_TEAM_COLOR
 
 NO_PERMS = lambda: error_embed("Permission Denied", "You need Manager role or higher to change records.")  # noqa: E731
 
@@ -26,6 +27,21 @@ class Record(commands.Cog):
     group = app_commands.Group(name="record", description="Manage team records", guild_only=True)
 
     # ── helpers ──────────────────────────────────────────────
+    @staticmethod
+    async def _team_role(guild: discord.Guild, team: dict) -> discord.Role | None:
+        """Every team is a role too (@Team name), in the default colour when nobody picked one.
+
+        Best effort: a bot without Manage Roles still creates the team, it just has no role.
+        """
+        try:
+            role = await guild.create_role(name=team["name"][:100], colour=discord.Colour(DEFAULT_TEAM_COLOR),
+                                           reason=f"TeamCore: team created by {team.get('created_by') or 'a manager'}")
+        except discord.HTTPException:
+            return None
+        await db.col("teams").update_one({"guild_id": str(guild.id), "team_id": team["team_id"]},
+                                          {"$set": {"role_id": str(role.id)}})
+        return role
+
     async def _guard(self, interaction: discord.Interaction, team_name: str):
         """Permission + team lookup for write commands. Returns the team or None (reply already sent)."""
         if not await has_manager_perms(interaction):
@@ -72,7 +88,11 @@ class Record(commands.Cog):
             team = await T.create_team(db.handle(), gid, name, competition, division, logo, interaction.user.id)
         except T.TeamError as e:
             return await interaction.response.send_message(embed=error_embed("Can't Create Team", str(e)), ephemeral=True)
-        await interaction.response.send_message(embed=success_embed("Team Created", f"Created **{name}** in **{competition}**."))
+        role = await self._team_role(interaction.guild, team)
+        line = f"Created **{name}** in **{competition}**."
+        if role is not None:
+            line += f"\nRole: {role.mention}"
+        await interaction.response.send_message(embed=success_embed("Team Created", line))
         self.bot.dispatch("team_record_changed", gid, team["team_id"])
 
     @group.command(name="delete", description="Delete a team and its history")
