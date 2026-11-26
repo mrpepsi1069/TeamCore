@@ -20,16 +20,24 @@
 2. `backend/deps.py` verifies the session, confirms the user is in that server (Discord's guild list), that the bot is in it, and computes their level (see below).
 3. The request is validated against `shared/resources.py` (unknown fields are dropped — a client can't set `guild_id`).
 4. MongoDB is updated, always scoped by `guild_id`.
-5. If Discord must change (post a poll, create a channel…), a **job** is written to `bot_jobs`. The bot (the only holder of the token) claims it atomically, runs it, and writes the result; the API waits up to 10 s and returns it. If the bot is offline the job stays queued and the UI says so.
+5. If Discord must change (post a poll, create a channel…), a **job** is written to `bot_jobs`. The bot (the only holder of the token) claims it atomically, runs it, and writes the result; the API waits up to 10 s and returns it. If the bot is offline the job stays queued and the UI says so. A few jobs are fire-and-forget (`wait=0`) because the database write is the source of truth — a suggestion decision is stored first and only then does the bot edit the Discord message, so it stands even with the bot offline.
 6. An `audit_logs` entry is written.
 
 The bot runs perfectly without the website: the bridge cog is additive and every job type is a fixed allow-list (`shared/jobs.py`).
+
+### Members: the one place that needs the bot to read Discord
+Dashboard access, team, position, jersey and roster status are plain writes to `dashboard_permissions` / `team_members` — the API does those itself. Two things it cannot do without the token:
+
+* **`members_sync`** (staff) — the bot publishes Discord's member list into `members` (bulk upsert, stale rows removed) and records the sync time in `member_sync`. The Members page shows what was synced last.
+* **`member_roles`** (admin) — the API diffs the requested role set against `members.role_ids`, rejects ids that are unknown, `@everyone` or managed by Discord, and asks the bot to add/remove the rest; the bot applies the same role-order checks as its own commands, and `members.role_ids` is updated only if it succeeded.
+
+So the directory is as fresh as the last sync, and a role edit for someone missing from the synced roster is refused — without their current roles the API can't compute a safe diff.
 
 ## Access levels
 | Level | Who |
 |---|---|
 | `admin` | Server owner, or Discord **Administrator** / **Manage Server** (decided from Discord's own permission bits at login) |
-| `manager`, `staff`, `viewer` | Granted by an admin on **Staff → Dashboard Access** (`dashboard_permissions`) |
+| `manager`, `staff`, `viewer` | Granted by an admin on **Members** → Manage (`dashboard_permissions`). Team and Discord-role assignment live in the same dialog |
 
 Each resource declares the level needed to read / write / delete (`shared/resources.py`), and the backend enforces it on every request; hiding buttons in the UI is only cosmetic.
 
@@ -47,6 +55,9 @@ The bot's existing collections were kept (renaming would orphan live data). New 
 | competitions / divisions | `competitions`, `divisions` | | announcements | `announcements` |
 | matches | `matches` | | scheduled_messages / reminders / workflows | same names |
 | statistics_channels | `stats_channels` | | player_profiles, tryouts, scouting_reports, staff_shifts, staff_reports, appeals, awards, audit_logs | same names (+ `hall_of_fame`, `webhooks`, `backups`, `countdowns`, `events`) |
+| leagues | `leagues` (the bot's `/league` data: name, abbreviation, signup link, role) | | members / member_sync | `members` (bot-published roster snapshot), `member_sync` (last sync per server) |
+
+Teams are not linked to a league by an id: a team belongs to a league when its `competition` / `competition_lower` matches the league's name or abbreviation. That keeps teams created in Discord grouped correctly, and it is why a league can't be deleted while any team still matches it.
 
 Internal: `sessions` (hashed tokens, TTL), `oauth_states` (TTL), `bot_jobs` (TTL 24 h), `counters`, `meta` (schema version).
 
