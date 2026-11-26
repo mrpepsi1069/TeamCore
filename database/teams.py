@@ -69,7 +69,8 @@ async def add_history(db, guild_id, team: dict, action: str, actor, before: dict
                                       "note": note, "timestamp": _now()})
 
 
-async def create_team(db, guild_id, name: str, competition: str | None = None, division: str | None = None, logo: str | None = None, actor="") -> dict:
+async def create_team(db, guild_id, name: str, competition: str | None = None, division: str | None = None,
+                      logo: str | None = None, actor="", color: int | None = None) -> dict:
     g, name = str(guild_id), name.strip()
     if not name:
         raise TeamError("The team needs a name.")
@@ -80,6 +81,8 @@ async def create_team(db, guild_id, name: str, competition: str | None = None, d
     comp = (competition or DEFAULT_COMPETITION).strip()
     doc = {"guild_id": g, "team_id": await next_seq(db, g, "team"), "name": name, "name_lower": name.lower(), "competition": comp, "competition_lower": comp.lower(),
            "division": division or None, "logo": logo or None, "wins": 0, "losses": 0, "ties": 0, "created_at": _now(), "created_by": str(actor)}
+    if color:
+        doc["color"] = int(color)   # the dashboard picks it; the bot turns it into the team's role colour
     doc["_id"] = (await db.teams.insert_one(doc)).inserted_id
     await ensure_competition(db, g, comp, str(actor))
     await add_history(db, g, doc, "created", actor, {"wins": 0, "losses": 0, "ties": 0}, doc)

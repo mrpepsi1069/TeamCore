@@ -4,6 +4,7 @@ import { api, g, API, getToken, setToken } from "./api.js";
 import { h, clear, spinner, toast, setAccent, errorBox, plain, menu, closeMenus, closeModals, icon, ICONS } from "./ui.js";
 import { renderResource } from "./resource.js";
 import { membersPage } from "./members.js";
+import { schedulePage } from "./schedule.js";
 import * as P from "./pages.js";
 
 const app = document.getElementById("app");
@@ -12,6 +13,7 @@ const app = document.getElementById("app");
 const CUSTOM = {
   overview: ["Overview", "viewer", P.overviewPage],
   members: ["Members", "staff", membersPage],
+  schedule: ["Scheduling", "staff", (c) => schedulePage(c, "gametime")],
   settings: ["Settings", "manager", P.settingsPage],
   verification: ["Verification", "manager", P.verificationPage],
   activity: ["Member activity", "viewer", P.activityPage],
@@ -33,9 +35,10 @@ CUSTOM.poll_archive = ["Polls", "viewer", (c) => P.pollsPage(c, "archive")];
 const NAV = [
   ["", ["overview"]],
   ["Club", ["members", "competition"]],
-  ["Community", ["polls", "giveaways", "events", "suggestions", "announcements", "role_panels", "countdowns"]],
+  ["Community", ["polls", "giveaways", "suggestions", "announcements", "role_panels"]],
+  ["Scheduling", ["schedule", "events", "countdowns", "scheduled_messages", "reminders"]],
   ["Players", ["player_profiles", "tryouts", "awards", "scouting_reports", "hall_of_fame"]],
-  ["Automation", ["scheduled_messages", "reminders", "workflows", "webhooks"]],
+  ["Automation", ["workflows", "webhooks"]],
   ["Insights", ["activity", "memberstats"]],
   ["Server", ["settings", "verification", "stats_channels", "moderation", "appeals", "staff_shifts", "staff_reports", "audit_logs", "backups", "export"]],
   ["", ["preferences"]],

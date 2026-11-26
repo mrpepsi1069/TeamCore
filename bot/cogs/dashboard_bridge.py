@@ -6,6 +6,7 @@ aren't available it falls back to a slow poll. The bot works fine without the we
 """
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -22,6 +23,11 @@ class JobError(Exception):
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def _label(value, limit: int = 80) -> str:
+    """One line, no doubled spaces — a time or league name goes straight into the poll text."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
 
 def build_cache(guild: discord.Guild) -> dict:
@@ -43,6 +49,7 @@ class DashboardBridge(commands.Cog):
         self._debounce: dict[int, asyncio.Task] = {}
         self._worker_task: asyncio.Task | None = None
         self._ticks = 0
+        self._bg: set[asyncio.Task] = set()   # background work that must outlive the job (mass DMs)
         self.heartbeat.start()
         self.resync.start()
 
@@ -247,6 +254,70 @@ class DashboardBridge(commands.Cog):
         if not d:
             raise JobError("That item no longer exists.")
         return d
+
+    # ── gametimes / times ────────────────────────────────────
+    async def _schedule_channel(self, guild):
+        """Same channel /gametime and /times use — without a fallback, because the dashboard has no current channel."""
+        cfg = await db.get_guild_config(str(guild.id)) or {}
+        cid = cfg.get("gametime_channel")
+        if not cid:
+            raise JobError("No gametime channel is set — pick one in the dashboard under Settings → Gametime channel.")
+        return self._text(guild, cid)
+
+    @staticmethod
+    def _ping_role(guild, role_id):
+        role = guild.get_role(int(role_id)) if str(role_id or "").isdigit() else None
+        if role is None or role.is_default():
+            raise JobError("The role to ping no longer exists.")
+        return role
+
+    async def _record_schedule(self, guild, kind, league, times, role, channel, msg, job):
+        """What the dashboard page lists. The poll itself lives in the message, like the slash commands."""
+        await db.col("schedule_polls").insert_one({
+            "guild_id": str(guild.id), "kind": kind, "league": league, "times": list(times),
+            "role_id": str(role.id), "role_name": role.name,
+            "channel_id": str(channel.id), "message_id": str(msg.id), "url": msg.jump_url,
+            "created_by": str(job.get("created_by") or ""), "created_at": _now(),
+        })
+
+    def _later(self, coro) -> None:
+        """Run something after the job has answered — mass DMs are far too slow to make the browser wait."""
+        task = asyncio.create_task(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    async def job_gametime_create(self, guild, p, job):
+        from cogs.gametime import GametimeView, dm_gametime_voters, gametime_embed
+        channel = await self._schedule_channel(guild)
+        role = self._ping_role(guild, p["role_id"])
+        league, time = _label(p["league"]), _label(p["time"])
+        if not league or not time:
+            raise JobError("Give this gametime a league and a time.")
+        msg = await channel.send(content=role.mention, embed=gametime_embed(league, time), view=GametimeView(),
+                                 allowed_mentions=discord.AllowedMentions(roles=True))
+        await db.create_gametime(str(guild.id), league, time, str(msg.id), str(channel.id), str(role.id),
+                                 str(job.get("created_by") or ""))
+        await self._record_schedule(guild, "gametime", league, [time], role, channel, msg, job)
+        if p.get("dm"):
+            self._later(dm_gametime_voters(guild, role, league, time, msg.jump_url, str(msg.id)))
+        return {"message": msg.jump_url, "channel": channel.name, "dm": bool(p.get("dm"))}
+
+    async def job_times_create(self, guild, p, job):
+        from cogs.times import TimesView, cleaned_times, times_embed
+        channel = await self._schedule_channel(guild)
+        role = self._ping_role(guild, p["role_id"])
+        league = _label(p["league"])
+        if not league:
+            raise JobError("Give these times a league.")
+        options = cleaned_times([str(t) for t in (p.get("times") or [])])
+        if len(options) < 2:
+            raise JobError("Give at least two different time options.")
+        if len(options) > 6:
+            raise JobError("Six time options is the maximum.")
+        msg = await channel.send(content=role.mention, embed=times_embed(league, options),
+                                 view=TimesView(options, league), allowed_mentions=discord.AllowedMentions(roles=True))
+        await self._record_schedule(guild, "times", league, options, role, channel, msg, job)
+        return {"message": msg.jump_url, "channel": channel.name, "options": len(options)}
 
     # ── jobs ─────────────────────────────────────────────────
     async def job_refresh_cache(self, guild, p, job):
@@ -514,6 +585,31 @@ class DashboardBridge(commands.Cog):
         await db.col("members").update_one({"guild_id": str(guild.id), "user_id": str(member.id)},
                                           {"$set": {"role_ids": [str(r.id) for r in member.roles if not r.is_default()]}})
         return {"added": [r.name for r in add], "removed": [r.name for r in remove]}
+
+    async def job_team_role_create(self, guild, p, job):
+        """Every team is a role: @Team name, in the team's colour. Safe to re-run — an existing role is edited."""
+        d = await self._doc("teams", guild, "team_id", int(p["team_id"]))
+        if not guild.me.guild_permissions.manage_roles:
+            raise JobError("I need the Manage Roles permission to create team roles.")
+        name, color = _label(d["name"], 100), int(d.get("color") or 0)
+        rid = str(d.get("role_id") or "")
+        existing = guild.get_role(int(rid)) if rid.isdigit() else None
+        try:
+            if existing is not None:
+                kwargs = {"name": name, "reason": "TeamCore: team updated"}
+                if color:
+                    kwargs["colour"] = discord.Colour(color)
+                await existing.edit(**kwargs)
+                return {"role_id": str(existing.id), "name": existing.name, "updated": True}
+            kwargs = {"name": name, "reason": f"TeamCore: team created by {job.get('created_by') or 'dashboard'}"}
+            if color:
+                kwargs["colour"] = discord.Colour(color)
+            role = await guild.create_role(**kwargs)
+        except discord.Forbidden:
+            raise JobError("I'm not allowed to manage roles here — my role needs to be above the team roles.")
+        await db.col("teams").update_one({"guild_id": str(guild.id), "team_id": d["team_id"]},
+                                          {"$set": {"role_id": str(role.id)}})
+        return {"role_id": str(role.id), "name": role.name}
 
     async def job_unban(self, guild, p, job):
         try:

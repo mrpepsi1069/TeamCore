@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from shared import settings
 from shared.security import hash_token
 from database.schema import apply_indexes
-from backend import auth, db, resources, routes_features, routes_guild, routes_members
+from backend import auth, db, resources, routes_features, routes_guild, routes_members, routes_schedule
 from backend.util import RateLimiter
 
 limiter = RateLimiter(limit=180, window=60)  # requests / minute / session-or-IP
@@ -57,6 +57,7 @@ app.include_router(auth.router)
 app.include_router(routes_guild.router)
 app.include_router(routes_features.router)
 app.include_router(routes_members.router)
+app.include_router(routes_schedule.router)
 app.include_router(resources.router)
 
 

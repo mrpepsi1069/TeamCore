@@ -143,11 +143,26 @@ async def create_default(ctx: Ctx, spec: dict, data: dict) -> dict:
 
 async def c_teams(ctx, spec, data):
     try:
-        doc = await T.create_team(handle(), ctx.guild_id, data["name"], data.get("competition"), data.get("division"), data.get("logo"), ctx.user["user_id"])
+        doc = await T.create_team(handle(), ctx.guild_id, data["name"], data.get("competition"), data.get("division"),
+                                  data.get("logo"), ctx.user["user_id"], color=data.get("color"))
     except T.TeamError as e:
         err(str(e))
     await notify_records(ctx, doc["team_id"])
-    return {"item": doc}
+    # A team is also a Discord role (@Team name in the team's colour); only the bot can create roles.
+    out: dict = {"item": doc}
+    res = await bridge.run_job(ctx.guild_id, "team_role_create", {"team_id": str(doc["team_id"])}, ctx.user["user_id"])
+    if res["ok"]:
+        role = res.get("result") or {}
+        if role.get("role_id"):
+            await coll("teams").update_one({"guild_id": ctx.guild_id, "team_id": doc["team_id"]},
+                                            {"$set": {"role_id": role["role_id"]}})
+            doc["role_id"] = role["role_id"]
+        out["notice"] = f"Team created — @{role.get('name') or doc['name']} role is in Discord."
+    elif res["ok"] is False:
+        out["notice"] = f"Team created, but the Discord role failed: {res['error']}"
+    else:
+        out["notice"] = "Team created. The bot will add the Discord role when it's back online."
+    return out
 
 
 async def c_team_linked(ctx, spec, data):

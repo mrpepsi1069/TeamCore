@@ -196,7 +196,8 @@ R("leagues", "Leagues", "", "Competition", "leagues",
   help="The same leagues as /league add in Discord. Give a team a league by setting its league to this name.")
 R("teams", "Teams", "", "Competition", "teams",
   [F("name", required=True, max=50), F("competition", picker="competition", max=50, default="General", label="League / competition"),
-   F("division", picker="division", max=50), F("logo", "url")],
+   F("division", picker="division", max=50), F("logo", "url"),
+   F("color", "color", "Team colour", default=0x5865F2, help="The bot creates a Discord role named after the team in this colour.")],
   ["name", "competition", "division", "record", "win_pct"], search=["name"], sort=["name_lower", 1],
   help="Change a record from the Teams tab of the Competition page so every change is logged.")
 R("team_members", "Rosters", "👥", "Competition", "team_members",

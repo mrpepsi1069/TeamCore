@@ -27,6 +27,29 @@ def _clean_time(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()[:80]
 
 
+def cleaned_times(values) -> list[str]:
+    """Trim and de-duplicate the options. Shared by /times and the dashboard job."""
+    out: list[str] = []
+    for t in (_clean_time(x) for x in values if x):
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def times_embed(league: str, options: list[str]) -> discord.Embed:
+    """The poll message, with one section per option. Shared by /times and the dashboard job."""
+    desc = f"**League:** {league}\n\nSelect which times work for you:\n\n"
+    for t in options:
+        desc += f"🕐 **{t}**\n• None yet\n\n"
+    embed = discord.Embed(
+        title="⏰ Available Times Poll",
+        description=desc.strip(),
+        color=0x5865F2,
+    )
+    embed.set_footer(text="Click the buttons to select your available times")
+    return embed
+
+
 class Times(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -62,25 +85,13 @@ class Times(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        time_options = []
-        for t in (_clean_time(x) for x in [time1, time2, time3, time4, time5, time6] if x):
-            if t and t not in time_options:
-                time_options.append(t)
+        time_options = cleaned_times([time1, time2, time3, time4, time5, time6])
         if len(time_options) < 2:
             return await interaction.followup.send(
                 embed=error_embed("Not Enough Options", "Give at least two different time options."), ephemeral=True
             )
 
-        desc = f"**League:** {league}\n\nSelect which times work for you:\n\n"
-        for t in time_options:
-            desc += f"🕐 **{t}**\n• None yet\n\n"
-
-        embed = discord.Embed(
-            title="⏰ Available Times Poll",
-            description=desc.strip(),
-            color=0x5865F2,
-        )
-        embed.set_footer(text="Click the buttons to select your available times")
+        embed = times_embed(league, time_options)
 
         view = TimesView(time_options, league)
 

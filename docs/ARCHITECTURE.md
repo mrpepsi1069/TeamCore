@@ -33,6 +33,9 @@ Dashboard access, team, position, jersey and roster status are plain writes to `
 
 So the directory is as fresh as the last sync, and a role edit for someone missing from the synced roster is refused — without their current roles the API can't compute a safe diff.
 
+### Gametimes and time polls
+The dashboard writes `gametime_create` / `times_create`; the bot builds **the same embed and buttons the slash commands use** (both cogs export their embed builder, so the two paths can't drift) and posts into `guild_config.gametime_channel`, then records the message link in `schedule_polls` for the page's list. Gametime DMs to the pinged role run as a background task after the job has answered — one message per member is far slower than the 10 s the browser waits.
+
 ## Access levels
 | Level | Who |
 |---|---|
@@ -59,7 +62,9 @@ The bot's existing collections were kept (renaming would orphan live data). New 
 
 Teams are not linked to a league by an id: a team belongs to a league when its `competition` / `competition_lower` matches the league's name or abbreviation. That keeps teams created in Discord grouped correctly, and it is why a league can't be deleted while any team still matches it.
 
-Internal: `sessions` (hashed tokens, TTL), `oauth_states` (TTL), `bot_jobs` (TTL 24 h), `counters`, `meta` (schema version).
+A team is also a Discord role. The dashboard stores the picked colour on the team document and asks the bot (`team_role_create`) to create or re-colour `@Team name`; the returned role id is written back to `teams.role_id`. Creating the role can't block the save — if the bot is offline the team still exists and the page says the role is pending.
+
+Internal: `sessions` (hashed tokens, TTL), `oauth_states` (TTL), `bot_jobs` (TTL 24 h), `counters`, `meta` (schema version), `schedule_polls` (gametimes/times posted from the dashboard, with their message links).
 
 Every server-specific document carries `guild_id`; all queries filter on it and every list has a `(guild_id, …)` index (`database/schema.py`).
 

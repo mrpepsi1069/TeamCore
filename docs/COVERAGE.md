@@ -2,17 +2,18 @@
 
 ✅ = working end-to-end (page → API → MongoDB → bot where Discord is involved). Everything below was built; the "limits" column says exactly what each page does and doesn't do.
 
-The navigation is grouped: **Overview**, then **Club · Community · Players · Automation · Insights · Server**, then **Preferences**. Pages that overlapped were merged into tabs, and old links still land on the right one:
+The navigation is grouped: **Overview**, then **Club · Community · Scheduling · Players · Automation · Insights · Server**, then **Preferences**. Pages that overlapped were merged into tabs, and old links still land on the right one:
 
 * **Leagues & results** (nav entry: *Competition*) — Leagues, Teams, Rosters, Matches, Standings, Competitions, Divisions. `teams`, `records`, `team_members`, `matches`, `leaderboard`, `competitions` and `divisions` deep links all open the matching tab.
 * **Polls** — Active and Archive tabs; the old `poll_archive` link opens Archive.
+* **Scheduling** — gametimes and time-option polls (tabs) sit in one sidebar group together with events, countdowns, scheduled messages and reminders.
 
 | Spec item | Page | Notes / limits |
 |---|---|---|
 | Server overview | Overview | Live counts, bot-online indicator, recent audit entries, manual "Sync with Discord" |
 | Server configuration | Settings | The same keys `/setup` uses (roles, channels, timezone, activity tracking) |
 | Leagues | Leagues & results → Leagues | A league is a row in the bot's own `leagues` collection (`/league`): name, abbreviation, signup link, league role. A team belongs to a league when its **League / competition** value matches the league's name or abbreviation, so teams created in Discord group correctly. Can't delete a league while teams still belong to it |
-| Teams & records | Leagues & results → Teams | +Win/+Loss/+Tie, "Set…", reset and full history inline, with teams grouped under their league. Roster rules: one row per player per team, unique jersey numbers. Also `/roster` in Discord |
+| Teams & records | Leagues & results → Teams | +Win/+Loss/+Tie, "Set…", reset and full history inline, with teams grouped under their league. Roster rules: one row per player per team, unique jersey numbers. Creating a team also creates the Discord role named after it, in the colour picked in the form (the bot needs **Manage Roles**); the role id is stored on the team. Also `/roster` in Discord |
 | Rosters | Leagues & results → Rosters | One row per player per team; players pick their team from the same list members do |
 | Match history | Leagues & results → Matches | Optional "update team records" (adds W/L/T to both teams, logged). Also `/match` in Discord |
 | Standings | Leagues & results → Standings | Sort by wins / win % / fewest losses, filter by league & division |
@@ -21,6 +22,7 @@ The navigation is grouped: **Overview**, then **Club · Community · Players · 
 | Statistics voice channels | Statistics Channels | Create/edit/remove; the bot creates the locked, visible voice channels |
 | Moderation | Moderation | Lock/unlock channels (original permission restored) + searchable log. **Kick/ban are not exposed on the web by design** (use Discord's own tools) |
 | Polls | Polls (Active / Archive tabs) | Create/end/delete; voting happens on the Discord message, results and closed polls are read back here |
+| Gametimes & time polls | Scheduling → Gametime, Time options | Posted by the bot to the server's **gametime channel**, exactly like `/gametime` (Can make / Can't make / Unsure buttons, optional DMs to the pinged role) and `/times` (2–6 options, one button each). Staff post gametimes, managers post time polls; the page lists recent polls with a jump link |
 | Giveaways | Giveaways | Create, end, reroll, role + account-age requirements |
 | Countdowns & events | Countdowns, Events | Countdowns publish a live-ticking message; events are a calendar list with a 24 h notification |
 | Member activity / growth | Member activity, Member growth | Activity tracking is opt-in per server; member growth uses hourly snapshots |

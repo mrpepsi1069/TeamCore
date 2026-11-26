@@ -28,6 +28,53 @@ def _format_list(ids: list[str]) -> str:
     return "\n".join(f"• <@{uid}>" for uid in ids) if ids else "• None yet"
 
 
+def gametime_embed(league: str, time: str) -> discord.Embed:
+    """The poll message. Shared by /gametime and the dashboard job so both are identical."""
+    embed = discord.Embed(
+        title="⏰ Gametime Scheduled",
+        description=f"**League:** {league}\n**Time:** {time}",
+        color=0x5865F2,
+    )
+    embed.add_field(name="✅ Can Make (0)",    value="• None yet", inline=False)
+    embed.add_field(name="❌ Can't Make (0)", value="• None yet", inline=False)
+    embed.add_field(name="❓ Unsure (0)",      value="• None yet", inline=False)
+    embed.set_footer(text="TeamCore | Gametime Poll")
+    return embed
+
+
+async def dm_gametime_voters(guild: discord.Guild, role: discord.Role, league: str, time: str,
+                             jump_url: str, message_id: str) -> int:
+    """DM every member with the role a copy of the poll. One message each, so it is deliberately slow;
+    returns how many were delivered. Shared by /gametime and the dashboard job."""
+    if not guild.chunked:
+        try:
+            await guild.chunk()
+        except Exception:
+            pass
+    dm_embed = discord.Embed(
+        title="📅 Gametime Attendance",
+        description=f"**League:** {league}\n**Time:** {time}\n\nCan you make it?",
+        color=0x5865F2,
+    )
+    dm_embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+    dm_embed.add_field(name="🔗 Jump to Poll", value=f"[Click Here]({jump_url})", inline=False)
+    sent = 0
+    for member in role.members:
+        if member.bot:
+            continue
+        try:
+            dm_view = discord.ui.View(timeout=None)
+            dm_view.add_item(discord.ui.Button(label="Yes",    style=discord.ButtonStyle.success,   custom_id=f"gametime_yes_{message_id}",    emoji="✅"))
+            dm_view.add_item(discord.ui.Button(label="No",     style=discord.ButtonStyle.danger,    custom_id=f"gametime_no_{message_id}",     emoji="❌"))
+            dm_view.add_item(discord.ui.Button(label="Unsure", style=discord.ButtonStyle.secondary, custom_id=f"gametime_unsure_{message_id}", emoji="❓"))
+            await member.send(embed=dm_embed, view=dm_view)
+            sent += 1
+            await asyncio.sleep(0.8)
+        except Exception:
+            pass
+    return sent
+
+
 class GametimeView(discord.ui.View):
     def __init__(self, message_id: str = None):
         super().__init__(timeout=None)
@@ -121,15 +168,7 @@ class Gametime(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        embed = discord.Embed(
-            title="⏰ Gametime Scheduled",
-            description=f"**League:** {league}\n**Time:** {time}",
-            color=0x5865F2,
-        )
-        embed.add_field(name="✅ Can Make (0)",    value="• None yet", inline=False)
-        embed.add_field(name="❌ Can't Make (0)", value="• None yet", inline=False)
-        embed.add_field(name="❓ Unsure (0)",      value="• None yet", inline=False)
-        embed.set_footer(text="TeamCore | Gametime Poll")
+        embed = gametime_embed(league, time)
 
         channel = await poll_channel(interaction)
         try:
@@ -149,33 +188,7 @@ class Gametime(commands.Cog):
         )
 
         # DM role members (role.members is only complete once the guild's member list is loaded)
-        if not interaction.guild.chunked:
-            try:
-                await interaction.guild.chunk()
-            except Exception:
-                pass
-        dm_count = 0
-        for member in role.members:
-            if member.bot:
-                continue
-            try:
-                dm_embed = discord.Embed(
-                    title="📅 Gametime Attendance",
-                    description=f"**League:** {league}\n**Time:** {time}\n\nCan you make it?",
-                    color=0x5865F2,
-                )
-                dm_embed.set_author(name=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-                dm_embed.add_field(name="🔗 Jump to Poll", value=f"[Click Here]({jump})", inline=False)
-
-                dm_view = discord.ui.View(timeout=None)
-                dm_view.add_item(discord.ui.Button(label="Yes",    style=discord.ButtonStyle.success,   custom_id=f"gametime_yes_{msg.id}",    emoji="✅"))
-                dm_view.add_item(discord.ui.Button(label="No",     style=discord.ButtonStyle.danger,    custom_id=f"gametime_no_{msg.id}",     emoji="❌"))
-                dm_view.add_item(discord.ui.Button(label="Unsure", style=discord.ButtonStyle.secondary, custom_id=f"gametime_unsure_{msg.id}", emoji="❓"))
-                await member.send(embed=dm_embed, view=dm_view)
-                dm_count += 1
-                await asyncio.sleep(0.8)
-            except Exception:
-                pass
+        dm_count = await dm_gametime_voters(interaction.guild, role, league, time, jump, str(msg.id))
 
         await interaction.followup.send(
             embed=success_embed("Gametime Created", f"Poll created for **{league}** in {channel.mention}\n📨 {dm_count} DMs sent\n⏰ {time}"),

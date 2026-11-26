@@ -26,6 +26,7 @@ INDEXES = [
     ("members", [("guild_id", 1), ("user_id", 1)], {"unique": True}),                       # the bot's member roster for the directory
     ("members", [("guild_id", 1), ("username", 1)], {}),
     ("member_sync", [("guild_id", 1)], {"unique": True}),
+    ("schedule_polls", [("guild_id", 1), ("created_at", -1)], {}),                          # gametime / times posted from the dashboard
     ("leagues", [("guild_id", 1), ("league_abbr", 1)], {"unique": True}),
     ("team_members", [("guild_id", 1), ("team_id", 1), ("user_id", 1)], {"unique": True}),   # a player is on a roster once
     ("team_members", [("guild_id", 1), ("user_id", 1)], {}),                                  # "which teams is this player on?"
