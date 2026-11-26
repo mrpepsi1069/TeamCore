@@ -4,7 +4,7 @@
 
 The navigation is grouped: **Overview**, then **Club · Community · Scheduling · Players · Automation · Insights · Server**, then **Preferences**. Pages that overlapped were merged into tabs, and old links still land on the right one:
 
-* **Leagues & results** (nav entry: *Competition*) — Leagues, Teams, Rosters, Matches, Standings, Competitions, Divisions. `teams`, `records`, `team_members`, `matches`, `leaderboard`, `competitions` and `divisions` deep links all open the matching tab.
+* **Leagues & results** (nav entry: *Teams & games*) — Leagues, Teams, Rosters, Matches, Standings, Competitions, Divisions. `teams`, `records`, `team_members`, `matches`, `leaderboard`, `competitions` and `divisions` deep links all open the matching tab.
 * **Polls** — Active and Archive tabs; the old `poll_archive` link opens Archive.
 * **Scheduling** — gametimes and time-option polls (tabs) sit in one sidebar group together with events, countdowns, scheduled messages and reminders.
 

@@ -28,7 +28,7 @@ const COMPETITION_TABS = {
   competition: "leagues", leagues: "leagues", teams: "teams", records: "teams", team_members: "rosters",
   competitions: "seasons", divisions: "divisions", matches: "matches", leaderboard: "standings",
 };
-for (const [key, tab] of Object.entries(COMPETITION_TABS)) CUSTOM[key] = ["Competition", "viewer", (c) => P.competitionPage(c, tab)];
+for (const [key, tab] of Object.entries(COMPETITION_TABS)) CUSTOM[key] = ["Teams & games", "viewer", (c) => P.competitionPage(c, tab)];
 CUSTOM.polls = ["Polls", "viewer", (c) => P.pollsPage(c, "active")];
 CUSTOM.poll_archive = ["Polls", "viewer", (c) => P.pollsPage(c, "archive")];
 
