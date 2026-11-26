@@ -2,7 +2,7 @@
 // browser and the server always validate the same shape.
 import { state, can } from "./state.js";
 import { g } from "./api.js";
-import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, errorBox } from "./ui.js";
+import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, errorBox, pageHead, plain } from "./ui.js";
 
 const isoToLocalInput = (iso) => {
   if (!iso) return "";
@@ -77,9 +77,11 @@ function fieldInput(f, value) {
   return { wrap, get, f };
 }
 
-export function openForm(spec, row, onSaved) {
+export function openForm(spec, row, onSaved, { prefill } = {}) {
   const editing = !!row;
-  const inputs = spec.fields.filter((f) => !f.readonly && !(editing && f.create_only)).map((f) => fieldInput(f, row?.[f.name] ?? (f.name === "role_ids" ? (row?.roles || []).map((r) => r.role_id) : undefined)));
+  const source = row || prefill || null;
+  const inputs = spec.fields.filter((f) => !f.readonly && !(editing && f.create_only))
+    .map((f) => fieldInput(f, source?.[f.name] ?? (f.name === "role_ids" ? (source?.roles || []).map((r) => r.role_id) : undefined)));
   const body = h("div", {}, inputs.map((i) => i.wrap), h("div", { class: "err", id: "form-err" }));
   const showErrors = (errors) => {
     body.querySelectorAll(".err").forEach((e) => (e.textContent = ""));
@@ -130,12 +132,12 @@ export async function renderResource(container, key, { embedded = false } = {}) 
   let page = 1, q = "", status = "";
   const statusField = spec.fields.find((f) => f.name === "status" && f.type === "select");
 
-  const head = embedded ? null : h("div", {}, h("h1", {}, `${spec.icon} ${spec.label}`), spec.help ? h("p", { class: "sub" }, spec.help) : null);
+  const head = embedded ? null : pageHead({ kicker: spec.group, title: plain(spec.label), sub: spec.help });
   const table = h("div", {});
-  const searchBox = spec.search?.length ? h("input", { placeholder: "Search…", style: null, oninput: (e) => { clearTimeout(searchBox._t); searchBox._t = setTimeout(() => { q = e.target.value; page = 1; load(); }, 300); } }) : null;
+  const searchBox = spec.search?.length ? h("input", { type: "search", placeholder: `Search ${plain(spec.label).toLowerCase()}…`, "aria-label": "Search", oninput: (e) => { clearTimeout(searchBox._t); searchBox._t = setTimeout(() => { q = e.target.value; page = 1; load(); }, 300); } }) : null;
   const statusSel = statusField ? h("select", { onchange: (e) => { status = e.target.value; page = 1; load(); } }, option("", "All statuses"), statusField.choices.map((c) => option(c, c.replace(/_/g, " ")))) : null;
-  const newBtn = spec.create && can(spec.write) ? h("button", { class: "btn primary", onclick: () => openForm(spec, null, load) }, "＋ New") : null;
-  const bar = h("div", { class: "row card" }, searchBox && h("div", { class: "search" }, searchBox), statusSel, h("span", { class: "spacer" }), newBtn);
+  const newBtn = spec.create && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openForm(spec, null, load) }, "New") : null;
+  const bar = h("div", { class: "card tight filters" }, searchBox && h("div", { class: "search" }, searchBox), statusSel, h("span", { class: "spacer" }), newBtn);
   clear(container).append(...[head, bar, table].filter(Boolean));
 
   async function runAction(row, a) {

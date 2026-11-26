@@ -1,35 +1,56 @@
 // TeamCore dashboard — shell, routing, login, server picker.
-import { state, can, LEVELS } from "./state.js";
+import { state, can } from "./state.js";
 import { api, g, API, getToken, setToken } from "./api.js";
-import { h, clear, spinner, toast, setAccent, errorBox } from "./ui.js";
+import { h, clear, spinner, toast, setAccent, errorBox, plain, menu, closeMenus, closeModals, icon, ICONS } from "./ui.js";
 import { renderResource } from "./resource.js";
+import { membersPage } from "./members.js";
 import * as P from "./pages.js";
 
 const app = document.getElementById("app");
 
-// Hand-built pages: key -> [icon, label, minimum level, renderer]
+// Hand-built pages: key -> [label, minimum level, renderer]
 const CUSTOM = {
-  overview: ["🏠", "Overview", "viewer", P.overviewPage], settings: ["⚙️", "Settings", "manager", P.settingsPage], verification: ["✅", "Verification", "manager", P.verificationPage],
-  records: ["🧮", "Team Records", "viewer", P.recordsPage], leaderboard: ["🥇", "Leaderboard", "viewer", P.leaderboardPage], poll_archive: ["🗄️", "Poll Archive", "viewer", P.pollArchivePage],
-  activity: ["💬", "Member Activity", "viewer", P.activityPage], memberstats: ["📈", "Member Stats", "viewer", P.memberStatsPage], moderation: ["🛡️", "Moderation", "staff", P.moderationPage],
-  backups: ["💾", "Backups", "admin", P.backupsPage], export: ["📦", "Data Export", "manager", P.exportPage], preferences: ["🎨", "Preferences", "viewer", P.preferencesPage],
+  overview: ["Overview", "viewer", P.overviewPage],
+  members: ["Members", "staff", membersPage],
+  settings: ["Settings", "manager", P.settingsPage],
+  verification: ["Verification", "manager", P.verificationPage],
+  activity: ["Member activity", "viewer", P.activityPage],
+  memberstats: ["Member growth", "viewer", P.memberStatsPage],
+  moderation: ["Moderation", "staff", P.moderationPage],
+  backups: ["Backups", "admin", P.backupsPage],
+  export: ["Data export", "manager", P.exportPage],
+  preferences: ["Preferences", "viewer", P.preferencesPage],
 };
+// Teams, rosters, leagues, divisions, matches and standings live in one place now — old links still land on the right tab.
+const COMPETITION_TABS = {
+  competition: "leagues", leagues: "leagues", teams: "teams", records: "teams", team_members: "rosters",
+  competitions: "seasons", divisions: "divisions", matches: "matches", leaderboard: "standings",
+};
+for (const [key, tab] of Object.entries(COMPETITION_TABS)) CUSTOM[key] = ["Competition", "viewer", (c) => P.competitionPage(c, tab)];
+CUSTOM.polls = ["Polls", "viewer", (c) => P.pollsPage(c, "active")];
+CUSTOM.poll_archive = ["Polls", "viewer", (c) => P.pollsPage(c, "archive")];
+
 const NAV = [
   ["", ["overview"]],
-  ["Server", ["settings", "verification", "backups", "export"]],
-  ["Competition", ["teams", "records", "team_members", "competitions", "divisions", "matches", "leaderboard", "stats_channels"]],
-  ["Community", ["polls", "poll_archive", "giveaways", "countdowns", "events", "suggestions", "announcements", "role_panels"]],
-  ["Automation", ["scheduled_messages", "reminders", "workflows", "webhooks"]],
+  ["Club", ["members", "competition"]],
+  ["Community", ["polls", "giveaways", "events", "suggestions", "announcements", "role_panels", "countdowns"]],
   ["Players", ["player_profiles", "tryouts", "awards", "scouting_reports", "hall_of_fame"]],
+  ["Automation", ["scheduled_messages", "reminders", "workflows", "webhooks"]],
   ["Insights", ["activity", "memberstats"]],
-  ["Staff", ["moderation", "appeals", "staff_shifts", "staff_reports", "dashboard_permissions", "audit_logs"]],
+  ["Server", ["settings", "verification", "stats_channels", "moderation", "appeals", "staff_shifts", "staff_reports", "audit_logs", "backups", "export"]],
+  ["", ["preferences"]],
 ];
+
 const visible = (key) => {
-  if (CUSTOM[key]) return can(CUSTOM[key][2]);
+  if (CUSTOM[key]) return can(CUSTOM[key][1]);
   const s = state.specs[key];
   return !!s && can(s.read);
 };
-const labelOf = (key) => (CUSTOM[key] ? [CUSTOM[key][0], CUSTOM[key][1]] : [state.specs[key].icon, state.specs[key].label]);
+const labelOf = (key) => (CUSTOM[key] ? CUSTOM[key][0] : plain(state.specs[key]?.label || key));
+
+// One global handler each: no per-render listeners piling up, and menus always close on an outside click.
+document.addEventListener("click", () => closeMenus());
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
 
 // ───────── boot ─────────
 function parseHash() {
@@ -48,7 +69,8 @@ async function boot() {
   clear(app).append(h("div", { class: "center" }, spinner()));
   try {
     const [me, meta, guilds] = await Promise.all([api("/auth/me"), api("/api/meta"), api("/api/guilds")]);
-    state.user = me; state.prefs = me.preferences || state.prefs; state.specs = meta.resources; state.settingsSpec = meta.settings; state.guilds = guilds.guilds; state.botInfo = guilds.bot;
+    state.user = me; state.prefs = me.preferences || state.prefs; state.specs = meta.resources; state.settingsSpec = meta.settings;
+    state.guilds = guilds.guilds; state.botInfo = guilds.bot;
     setAccent(state.prefs.accent || "#FF7A1A");
   } catch (e) {
     if (e.status === 401) return loginScreen();
@@ -59,9 +81,13 @@ async function boot() {
 }
 
 function loginScreen(error) {
-  const msgs = { login_cancelled: "Login was cancelled.", bad_state: "Login expired — please try again.", token_exchange_failed: "Discord rejected the login. Try again.", profile_failed: "Couldn't read your Discord profile." };
+  const msgs = {
+    login_cancelled: "Login was cancelled.", bad_state: "Login expired — please try again.",
+    token_exchange_failed: "Discord rejected the login. Try again.", profile_failed: "Couldn't read your Discord profile.",
+  };
   clear(app).append(h("div", { class: "center" }, h("div", { class: "hero" },
-    h("div", { class: "logo-lg" }, "🏆"), h("h1", {}, "TeamCore Dashboard"), h("p", { class: "sub" }, "Manage your league, teams and community from the browser. Sign in with Discord to see the servers you can manage."),
+    h("div", { class: "logo-lg" }, "TC"), h("h1", {}, "TeamCore"), 
+    h("p", { class: "lead" }, "Leagues, teams, rosters and community — managed from the browser."),
     error ? h("p", { class: "err" }, msgs[error] || "Login failed.") : null,
     h("a", { class: "btn primary", href: `${API}/auth/login` }, "Sign in with Discord"),
     h("p", { class: "help" }, "We only request your username and server list. We never see your password."))));
@@ -69,6 +95,7 @@ function loginScreen(error) {
 
 // ───────── routing ─────────
 async function route() {
+  closeModals();
   const m = location.hash.match(/^#\/g\/(\d+)(?:\/([\w-]+))?/);
   if (!m) return serverPicker();
   const [, gid, page = "overview"] = m;
@@ -80,7 +107,8 @@ async function route() {
       state.gmeta = meta; state.level = meta.level;
     } catch (e) {
       state.gid = null;
-      clear(app).append(h("div", { class: "center" }, h("div", { class: "hero" }, errorBox(e), h("a", { class: "btn", href: "#/" }, "← Choose another server"))));
+      clear(app).append(h("div", { class: "center" }, h("div", { class: "hero" }, errorBox(e),
+        h("p", { class: "help" }, h("a", { href: "#/" }, "← Choose another server")))));
       return;
     }
     buildShell();
@@ -91,19 +119,24 @@ async function route() {
 async function serverPicker() {
   state.gid = null; state.gmeta = null;
   try { const r = await api("/api/guilds"); state.guilds = r.guilds; state.botInfo = r.bot; } catch { /* keep cached list */ }
-  const card = (gd) => h("div", { class: "server", onclick: () => (gd.bot_present ? (location.hash = `#/g/${gd.id}`) : window.open(gd.invite_url, "_blank", "noopener")) },
+  document.title = "TeamCore";
+  const card = (gd) => h("button", { class: "server", onclick: () => (gd.bot_present ? (location.hash = `#/g/${gd.id}`) : window.open(gd.invite_url, "_blank", "noopener")) },
     gd.icon ? h("img", { class: "gicon", src: gd.icon, alt: "" }) : h("div", { class: "gicon" }, gd.name[0]),
-    h("div", {}, h("b", {}, gd.name), h("div", { class: "sub" }, gd.bot_present ? `${gd.level} access` : "Bot not synced — tap to add TeamCore →")));
+    h("div", {}, h("b", {}, gd.name), h("div", { class: "sub" }, gd.bot_present ? `${gd.level} access` : "Add TeamCore to this server")));
   clear(app).append(h("div", { class: "content" },
-    h("div", { class: "row" }, h("h1", {}, "Choose a server"), h("span", { class: "spacer" }),
-      h("button", { class: "btn small", onclick: async () => { const r = await api("/api/guilds?refresh=true"); state.guilds = r.guilds; state.botInfo = r.bot; serverPicker(); } }, "↻ Refresh"),
-      h("button", { class: "btn small", onclick: signOut }, "Sign out")),
-    h("p", { class: "sub" }, "Servers you own or manage — or where an admin gave you dashboard access."),
+    h("div", { class: "page-head" },
+      h("div", { class: "kicker" }, "Signed in as " + (state.user?.username || "")),
+      h("div", { class: "page-head-row" }, h("h1", {}, "Choose a server"),
+        h("div", { class: "page-actions" },
+          h("button", { class: "btn small", onclick: async () => { const r = await api("/api/guilds?refresh=true"); state.guilds = r.guilds; state.botInfo = r.bot; serverPicker(); } }, "Refresh list"),
+          h("button", { class: "btn small ghost", onclick: signOut }, "Sign out"))),
+      h("p", { class: "page-sub" }, "Servers you own or manage — or where an admin gave you dashboard access.")),
     botBanner(),
-    state.guilds.length ? h("div", { class: "servers" }, state.guilds.map(card)) : h("div", { class: "card empty" }, "No servers found. You need Administrator / Manage Server, or an admin must grant you access.")));
+    state.guilds.length ? h("div", { class: "servers" }, state.guilds.map(card))
+      : h("div", { class: "card empty" }, "No servers found. You need Administrator or Manage Server, or an admin must grant you access.")));
 }
 
-// Explains WHY servers show "Add TeamCore" instead of leaving the user guessing.
+// Explains WHY servers show "add TeamCore" instead of leaving the user guessing.
 function botBanner() {
   const b = state.botInfo, missing = state.guilds.filter((x) => !x.bot_present).length;
   if (!b || (!missing && b.online)) return null;
@@ -111,18 +144,18 @@ function botBanner() {
   let title, text;
   if (!b.last_seen) {
     title = "The bot has never reported to this database";
-    text = "Check that your bot host (Koyeb) is running the NEW code — run command `python bot/bot.py` — and that its MONGODB_URI / DATABASE_URL points at the same MongoDB cluster as this website. Then restart the bot and press Refresh.";
+    text = "Check that your bot host is running the current code and that its MONGODB_URI / DATABASE_URL points at the same cluster as this website. Then restart the bot and press Refresh list.";
   } else if (!b.online) {
     title = `The bot was last seen ${ago} minute(s) ago`;
-    text = "It looks offline (free hosts can sleep). Wake or restart it, wait a minute, then press Refresh.";
+    text = "It looks offline (free hosts can sleep). Wake or restart it, wait a minute, then press Refresh list.";
   } else if (!b.servers_synced) {
     title = "The bot is online but hasn't published any servers yet";
-    text = "Restart the bot and watch its log for “📡 Dashboard: published …”. If you don't see it, the bot is still on old code.";
+    text = "Restart the bot and watch its log for “Dashboard: published …”. If you don't see it, the bot is still on old code.";
   } else {
     title = `TeamCore is online and has synced ${b.servers_synced} server(s)`;
-    text = "Servers marked “Add TeamCore” don't have the bot — or it joined in the last few minutes. Press Refresh in a moment.";
+    text = "Servers without the bot — or where it joined in the last few minutes — will appear after a refresh.";
   }
-  return h("div", { class: "card" }, h("b", {}, "ℹ️ " + title), h("p", { class: "sub" }, text));
+  return h("div", { class: "card" }, h("h2", {}, title), h("p", { class: "page-sub" }, text));
 }
 
 async function signOut() {
@@ -132,56 +165,110 @@ async function signOut() {
 
 // ───────── shell ─────────
 let content, side, notifTimer;
+let notifItems = [];
+
 function buildShell() {
   clearInterval(notifTimer);
+  closeMenus();
   const guild = state.gmeta.guild;
+  const closeSide = () => side.classList.remove("open");
   side = h("aside", { class: "side" });
-  const serverBtn = h("button", { class: "btn server-sel", onclick: () => (location.hash = "#/") }, guild.icon ? h("img", { class: "avatar", src: guild.icon, alt: "" }) : "🏟️", " ", h("b", {}, guild.name), h("span", { class: "spacer" }), "⇄");
-  side.append(h("div", { class: "brand" }, h("div", { class: "logo" }, "🏆"), "TeamCore"), serverBtn,
+
+  const serverBtn = h("button", { class: "btn server-sel", onclick: () => (location.hash = "#/") },
+    guild.icon ? h("img", { class: "avatar sm", src: guild.icon, alt: "" }) : h("span", { class: "avatar sm" }),
+    h("b", {}, guild.name), h("span", { class: "spacer" }), h("span", { class: "chev" }, "⇄"));
+
+  side.append(
+    h("div", { class: "brand" }, h("div", { class: "logo" }, "TC"), h("span", {}, "TeamCore"), h("em", {}, "Console")),
+    serverBtn,
     h("nav", { class: "nav" }, NAV.map(([group, keys]) => {
       const items = keys.filter(visible);
-      return items.length ? [group ? h("div", { class: "nav-group" }, group) : null, items.map((k) => { const [i, l] = labelOf(k); return h("a", { dataset: { key: k }, onclick: () => { location.hash = `#/g/${state.gid}/${k}`; side.classList.remove("open"); } }, i, " ", l); })] : null;
-    })));
+      if (!items.length) return null;
+      return [group ? h("div", { class: "nav-group" }, group) : null,
+        items.map((k) => h("a", { dataset: { key: k }, onclick: () => { location.hash = `#/g/${state.gid}/${k}`; closeSide(); } }, labelOf(k)))];
+    })),
+    h("div", { class: "side-foot" },
+      h("div", { class: "row" }, h("span", { class: "badge plain" }, state.level),
+        h("span", { class: "spacer" }),
+        h("button", { class: "btn small ghost", onclick: () => { location.hash = `#/g/${state.gid}/preferences`; } }, "Settings"))));
 
+  // search
   const results = h("div", { class: "results hidden" });
-  const q = h("input", { placeholder: "Search teams, players, suggestions…", oninput: () => { clearTimeout(q._t); q._t = setTimeout(async () => {
-    if (q.value.trim().length < 2) return results.classList.add("hidden");
-    try { const { results: r } = await g(`/search?q=${encodeURIComponent(q.value.trim())}`); clear(results).append(r.length ? r.map((x) => h("a", { onclick: () => { results.classList.add("hidden"); q.value = ""; location.hash = `#/g/${state.gid}/${x.page}`; } }, x.label, h("span", { class: "sub" }, x.page.replace(/_/g, " ")))) : h("a", {}, "No results")); results.classList.remove("hidden"); } catch { /* ignore */ }
-  }, 300); } });
-  document.addEventListener("click", (e) => { if (!e.target.closest(".search")) results.classList.add("hidden"); });
+  const q = h("input", { type: "search", placeholder: "Search teams, players, suggestions…", "aria-label": "Search this server",
+    oninput: () => {
+      clearTimeout(q._t);
+      q._t = setTimeout(async () => {
+        if (q.value.trim().length < 2) return results.classList.add("hidden");
+        try {
+          const { results: r } = await g(`/search?q=${encodeURIComponent(q.value.trim())}`);
+          // NB: spread the list — passing an array to append() stringifies the anchors into URLs.
+          clear(results).append(...(r.length
+            ? r.map((x) => h("a", { href: `#/g/${state.gid}/${x.page}`, onclick: () => { results.classList.add("hidden"); q.value = ""; } },
+              x.label, h("span", { class: "menu-item-meta" }, String(x.page).replace(/_/g, " "))))
+            : [h("div", { class: "menu-empty" }, "No matches")]));
+          results.classList.remove("hidden");
+        } catch (e) { clear(results).append(h("div", { class: "menu-empty" }, e.message)); results.classList.remove("hidden"); }
+      }, 260);
+    } });
 
-  const bell = h("button", { class: "btn rel", "aria-label": "Notifications", onclick: (e) => { e.stopPropagation(); toggleMenu(bellMenu); } }, "🔔");
-  const bellMenu = h("div", { class: "menu hidden" });
-  const userMenu = h("div", { class: "menu hidden" },
-    h("a", { onclick: () => { location.hash = `#/g/${state.gid}/preferences`; toggleMenu(userMenu); } }, "🎨 Preferences"),
-    h("a", { onclick: () => (location.hash = "#/") }, "⇄ Switch server"), h("button", { class: "item", onclick: signOut }, "⎋ Sign out"));
-  const userBtn = h("button", { class: "btn", onclick: (e) => { e.stopPropagation(); toggleMenu(userMenu); } }, h("img", { class: "avatar", src: state.user.avatar_url, alt: "" }), state.user.username);
-  const toggleMenu = (m) => { [bellMenu, userMenu].forEach((x) => x !== m && x.classList.add("hidden")); m.classList.toggle("hidden"); };
-  document.addEventListener("click", () => [bellMenu, userMenu].forEach((x) => x.classList.add("hidden")));
+  // notifications
+  const bell = h("button", { class: "btn bell" }, icon(ICONS.bell, 17), h("span", { class: "badge-count hidden" }));
+  const notifMenu = menu(bell, (panel) => {
+    clear(panel).append(h("div", { class: "menu-head" }, "Notifications",
+      h("button", { class: "btn small ghost", onclick: () => loadNotifs(true) }, "Refresh")));
+    if (!notifItems.length) return panel.append(h("div", { class: "menu-empty" }, "You're all caught up."));
+    notifItems.forEach((n) => panel.append(h("a", { href: `#/g/${state.gid}/${n.page}` },
+      h("span", { class: "menu-item-text" }, n.text), h("span", { class: "menu-item-meta" }, "Open"))));
+  }, { label: "Notifications" });
 
-  async function loadNotifs() {
-    try {
-      const { items } = await g("/notifications");
-      bell.querySelector(".dot")?.remove();
-      if (items.length) bell.append(h("span", { class: "dot" }, items.length));
-      clear(bellMenu).append(items.length ? items.map((n) => h("a", { onclick: () => { location.hash = `#/g/${state.gid}/${n.page}`; bellMenu.classList.add("hidden"); } }, n.text)) : h("div", { class: "empty" }, "You're all caught up ✨"));
-    } catch { /* non-critical */ }
-  }
+  // user menu
+  const avatar = state.user?.avatar_url ? h("img", { class: "avatar sm", src: state.user.avatar_url, alt: "" }) : h("span", { class: "avatar sm" });
+  const userBtn = h("button", { class: "btn user-chip" }, avatar, h("b", {}, state.user?.username || "Account"));
+  const userMenu = menu(userBtn, (panel) => {
+    clear(panel).append(
+      h("div", { class: "menu-head" }, state.user?.username || "Account"),
+      h("a", { href: `#/g/${state.gid}/preferences` }, "Preferences"),
+      h("a", { href: "#/" }, "Switch server"),
+      h("button", { class: "item", onclick: signOut }, "Sign out"));
+  }, { label: "Account menu" });
 
-  const top = h("header", { class: "topbar" }, h("button", { class: "btn menu-btn", "aria-label": "Menu", onclick: () => side.classList.toggle("open") }, "☰"),
-    h("div", { class: "search" }, q, results), h("span", { class: "spacer" }), h("div", { class: "rel" }, bell, bellMenu), h("div", { class: "rel" }, userBtn, userMenu));
+  const top = h("header", { class: "topbar" },
+    h("button", { class: "btn menu-btn ghost", "aria-label": "Menu", onclick: () => side.classList.toggle("open") }, icon(ICONS.menu, 18)),
+    h("div", { class: "search" }, q, results),
+    h("span", { class: "spacer" }),
+    notifMenu, userMenu);
+
   content = h("main", { class: "content" });
   clear(app).append(h("div", { class: "shell" }, side, h("div", { class: "main" }, top, content)));
   loadNotifs();
-  notifTimer = setInterval(loadNotifs, 120000); // one tiny request every 2 minutes
+  notifTimer = setInterval(loadNotifs, 180000); // one small request every 3 minutes
+}
+
+async function loadNotifs(manual = false) {
+  const badge = document.querySelector(".bell .badge-count");
+  try {
+    const { items } = await g("/notifications");
+    notifItems = items || [];
+    if (badge) {
+      badge.textContent = String(notifItems.length);
+      badge.classList.toggle("hidden", !notifItems.length);
+    }
+    if (manual) toast(notifItems.length ? `${notifItems.length} notification(s)` : "Nothing new");
+  } catch (e) {
+    notifItems = [];
+    if (badge) badge.classList.add("hidden");
+    if (manual) toast(e.message, "err");
+  }
 }
 
 async function openPage(key) {
+  closeMenus();
   if (!visible(key)) key = "overview";
   side.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
+  document.title = `${labelOf(key)} · ${state.gmeta.guild.name} · TeamCore`;
   clear(content).append(spinner());
   try {
-    if (CUSTOM[key]) await CUSTOM[key][3](content);
+    if (CUSTOM[key]) await CUSTOM[key][2](content);
     else await renderResource(content, key);
   } catch (e) { clear(content).append(errorBox(e)); }
 }

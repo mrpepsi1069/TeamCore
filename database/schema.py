@@ -23,6 +23,10 @@ INDEXES = [
     ("audit_logs", [("guild_id", 1), ("created_at", -1)], {}),
     ("moderation_logs", [("guild_id", 1), ("created_at", -1)], {}),
     ("dashboard_permissions", [("guild_id", 1), ("user_id", 1)], {"unique": True}),
+    ("members", [("guild_id", 1), ("user_id", 1)], {"unique": True}),                       # the bot's member roster for the directory
+    ("members", [("guild_id", 1), ("username", 1)], {}),
+    ("member_sync", [("guild_id", 1)], {"unique": True}),
+    ("leagues", [("guild_id", 1), ("league_abbr", 1)], {"unique": True}),
     ("team_members", [("guild_id", 1), ("team_id", 1), ("user_id", 1)], {"unique": True}),   # a player is on a roster once
     ("team_members", [("guild_id", 1), ("user_id", 1)], {}),                                  # "which teams is this player on?"
     ("matches", [("guild_id", 1), ("home_team_id", 1), ("played_at", -1)], {}),

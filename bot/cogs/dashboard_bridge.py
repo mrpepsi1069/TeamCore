@@ -464,6 +464,57 @@ class DashboardBridge(commands.Cog):
         report = await restore(guild, b["data"], p["mode"] == "full")
         return {k: (v if not isinstance(v, list) else v[:20]) for k, v in report.items()}
 
+    async def job_members_sync(self, guild, p, job):
+        """Publish a compact member roster (no bots) so the dashboard directory can list everyone.
+        Asked for on demand — the website never holds the bot token itself."""
+        from pymongo import ReplaceOne
+        gid, at = str(guild.id), _now()
+        members = list(guild.members)
+        if guild.member_count and len(members) < guild.member_count * 0.9:  # cache looks incomplete → ask Discord
+            try:
+                members = [m async for m in guild.fetch_members(limit=None)]
+            except discord.HTTPException:
+                pass
+        rows = []
+        for m in members:
+            if m.bot:
+                continue
+            rows.append({"guild_id": gid, "user_id": str(m.id), "username": m.name,
+                         "display_name": getattr(m, "display_name", None) or m.name,
+                         "avatar": m.display_avatar.url if m.display_avatar else None,
+                         "joined_at": m.joined_at, "role_ids": [str(r.id) for r in m.roles if not r.is_default()],
+                         "bot": False, "synced_at": at})
+        col = db.col("members")
+        for i in range(0, len(rows), 400):  # one round trip per 400 members, so the free tier stays quiet
+            await col.bulk_write([ReplaceOne({"guild_id": gid, "user_id": r["user_id"]}, r, upsert=True) for r in rows[i:i + 400]], ordered=False)
+        await col.delete_many({"guild_id": gid, "user_id": {"$nin": [r["user_id"] for r in rows]}})
+        await db.col("member_sync").update_one({"guild_id": gid}, {"$set": {"synced_at": at, "members": len(rows)}}, upsert=True)
+        return {"members": len(rows)}
+
+    async def job_member_roles(self, guild, p, job):
+        """Add/remove Discord roles for one member, with the same hierarchy checks the bot's own commands use."""
+        member = guild.get_member(int(p["user_id"]))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(p["user_id"]))
+            except discord.NotFound:
+                raise JobError("That member isn't in this server anymore.")
+        add = [guild.get_role(int(r)) for r in (p.get("add") or [])]
+        remove = [guild.get_role(int(r)) for r in (p.get("remove") or [])]
+        for r in add + remove:
+            if r is None:
+                raise JobError("One of those roles no longer exists.")
+            if r.is_default() or r.managed or r >= guild.me.top_role:
+                raise JobError(f"@{r.name} is managed by Discord or above my highest role, so I can't change it.")
+        reason = f"TeamCore dashboard ({p.get('by') or 'admin'})"
+        if add:
+            await member.add_roles(*add, reason=reason)
+        if remove:
+            await member.remove_roles(*remove, reason=reason)
+        await db.col("members").update_one({"guild_id": str(guild.id), "user_id": str(member.id)},
+                                          {"$set": {"role_ids": [str(r.id) for r in member.roles if not r.is_default()]}})
+        return {"added": [r.name for r in add], "removed": [r.name for r in remove]}
+
     async def job_unban(self, guild, p, job):
         try:
             await guild.unban(discord.Object(id=int(p["user_id"])), reason=p.get("reason") or "Appeal approved")

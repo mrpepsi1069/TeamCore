@@ -1,42 +1,70 @@
 // Hand-built pages (everything else is generated from specs by resource.js).
 import { state, can } from "./state.js";
 import { api, g } from "./api.js";
-import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, barChart, meter, errorBox, setAccent } from "./ui.js";
-import { renderResource } from "./resource.js";
+import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, barChart, meter, errorBox,
+  setAccent, pageHead, tabPage } from "./ui.js";
+import { renderResource, openForm } from "./resource.js";
 
-const wrap = async (c, title, sub, fn) => {
-  clear(c).append(h("h1", {}, title), sub ? h("p", { class: "sub" }, sub) : null, spinner());
-  try { const body = await fn(); c.lastChild.remove(); c.append(body); } catch (e) { c.lastChild.remove(); c.append(errorBox(e)); }
-};
 const opt = (v, l, sel) => h("option", { value: v, selected: sel || null }, l);
+
+// Renders a page head immediately, then swaps in the loaded body (or an error).
+function wrap(c, title, sub, fn, kicker) {
+  clear(c).append(pageHead({ kicker, title, sub }));
+  const body = h("div", {});
+  c.append(body, spinner());
+  const loading = c.lastChild;
+  fn().then((node) => { loading.remove(); if (node) body.append(node); })
+    .catch((e) => { loading.remove(); clear(body).append(errorBox(e)); });
+}
 
 // ───────── overview ─────────
 export function overviewPage(c) {
-  return wrap(c, `${state.gmeta.guild.name}`, "Server overview", async () => {
+  return wrap(c, state.gmeta.guild.name, "Everything happening in this server, in one place.", async () => {
     const o = await g("/overview");
-    const stat = (n, label) => h("div", { class: "stat" }, h("b", {}, n ?? "—"), h("span", {}, label));
+    const stat = (value, label) => h("div", { class: "stat" }, h("b", {}, value ?? "—"), h("span", {}, label));
+    const link = (value, label, page) => h("a", { class: "stat clickable", href: `#/g/${state.gid}/${page}` },
+      h("b", {}, value ?? "—"), h("span", {}, label));
     return h("div", {},
-      h("div", { class: "card row" },
-        h("span", { class: "badge " + (o.bot_online ? "open" : "failed") }, o.bot_online ? "● Bot online" : "● Bot offline"),
-        h("span", { class: "sub", }, `Your access: ${o.level}`), h("span", { class: "spacer" }),
-        h("span", { class: "sub" }, o.server.synced_at ? `Server info synced ${fmtDate(o.server.synced_at)}` : ""),
-        can("staff") ? h("button", { class: "btn small", onclick: async () => { const r = await g("/refresh", { method: "POST" }).catch((e) => ({ error: e.message })); toast(r.error || "Refresh requested", r.error ? "err" : ""); } }, "↻ Sync with Discord") : null),
+      h("div", { class: "card tight row" },
+        h("span", { class: `badge ${o.bot_online ? "open" : "failed"}` }, o.bot_online ? "Bot online" : "Bot offline"),
+        h("span", { class: "badge plain" }, `Your access: ${o.level}`),
+        h("span", { class: "spacer" }),
+        h("span", { class: "sub" }, o.server.synced_at ? `Discord data synced ${fmtDate(o.server.synced_at)}` : "Not synced from Discord yet"),
+        can("staff") ? h("button", { class: "btn small", onclick: async (e) => {
+          e.target.disabled = true;
+          const r = await g("/refresh", { method: "POST" }).catch((err) => ({ error: err.message }));
+          toast(r.error || "Sync requested — Discord data refreshes in a moment", r.error ? "err" : "");
+          e.target.disabled = false;
+        } }, "Sync with Discord") : null),
       h("div", { class: "grid" },
-        stat(o.server.member_count?.toLocaleString(), "Members"), stat(o.server.boosts, `Boosts (tier ${o.server.tier ?? 0})`),
-        stat(o.counts.teams, "Teams"), stat(o.counts.matches, "Matches logged"), stat(o.counts.open_polls, "Open polls"),
-        stat(o.counts.open_giveaways, "Active giveaways"), stat(o.counts.pending_suggestions, "Pending suggestions"), stat(o.counts.pending_appeals, "Pending appeals"), stat(o.counts.players, "Player profiles")),
+        stat(o.server.member_count?.toLocaleString(), "Members"),
+        stat(o.server.boosts, `Boosts · tier ${o.server.tier ?? 0}`),
+        link(o.counts.teams, "Teams", "competition"),
+        link(o.counts.matches, "Matches logged", "matches"),
+        link(o.counts.open_polls, "Open polls", "polls"),
+        link(o.counts.open_giveaways, "Live giveaways", "giveaways"),
+        link(o.counts.pending_suggestions, "Suggestions pending", "suggestions"),
+        link(o.counts.pending_appeals, "Appeals pending", "appeals"),
+        link(o.counts.players, "Player profiles", "player_profiles")),
       h("div", { class: "card" }, h("h2", {}, "Recent dashboard activity"),
-        o.recent.length ? h("div", {}, o.recent.map((r) => h("div", { class: "row" }, h("b", {}, r.user_name), h("span", {}, r.action), h("span", { class: "sub" }, r.target || ""), h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(r.created_at)))))
-          : h("p", { class: "sub" }, "Nothing yet.")));
-  });
+        o.recent.length
+          ? h("div", { class: "list" }, o.recent.map((r) => h("div", { class: "list-row" },
+            h("b", {}, r.user_name || "—"), h("span", {}, r.action), h("span", { class: "sub" }, r.target || ""),
+            h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(r.created_at)))))
+          : h("p", { class: "page-sub" }, "No dashboard changes logged yet.")));
+  }, "Server");
 }
 
 // ───────── settings + verification ─────────
-const LABELS = { admin_role: "Admin role", franchise_owner_role: "Franchise Owner role", general_manager_role: "General Manager role", head_coach_role: "Head Coach role",
-  assistant_coach_role: "Assistant Coach role", verify_role: "Verification role", log_channel: "Log channel", announce_channel: "Announcements channel", gametime_channel: "Gametime channel",
-  matchmaking_channel: "Matchmaking channel", contract_channel: "Contract channel", awards_channel: "Awards channel", league_log_channel: "League log channel",
-  suggestion_channel: "Suggestions channel", memberstats_channel: "Member report channel", verify_channel: "Verification channel", activity_enabled: "Track message activity",
-  activity_channels: "Only track these channels (empty = all)", timezone: "Server timezone" };
+const LABELS = {
+  admin_role: "Admin role", franchise_owner_role: "Franchise owner role", general_manager_role: "General manager role",
+  head_coach_role: "Head coach role", assistant_coach_role: "Assistant coach role", verify_role: "Verification role",
+  log_channel: "Log channel", announce_channel: "Announcements channel", gametime_channel: "Gametime channel",
+  matchmaking_channel: "Matchmaking channel", contract_channel: "Contract channel", awards_channel: "Awards channel",
+  league_log_channel: "League log channel", suggestion_channel: "Suggestions channel", memberstats_channel: "Member report channel",
+  verify_channel: "Verification channel", activity_enabled: "Track message activity",
+  activity_channels: "Only track these channels (empty = all)", timezone: "Server timezone",
+};
 
 function settingsForm(keys, saved) {
   const m = state.gmeta, inputs = {};
@@ -49,110 +77,288 @@ function settingsForm(keys, saved) {
     else if (type === "bool") el = h("input", { type: "checkbox", checked: !!val });
     else el = h("input", { list: "dl_tz", value: val || "", placeholder: "e.g. America/New_York" });
     inputs[key] = { el, type };
-    return h("div", {}, h("label", {}, LABELS[key] || key), el);
+    return h("div", { class: "field" }, h("label", {}, LABELS[key] || key), el);
   };
   const types = Object.fromEntries(state.settingsSpec.map((s) => [s.key, s.type]));
-  const form = h("div", {}, keys.map((k) => row(k, types[k])), h("datalist", { id: "dl_tz" }, m.timezones.map((z) => h("option", { value: z }))));
-  const read = () => Object.fromEntries(Object.entries(inputs).map(([k, { el, type }]) => [k, type === "bool" ? el.checked : type === "channels" ? [...el.selectedOptions].map((o) => o.value) : el.value]));
+  const form = h("div", { class: "split" }, keys.map((k) => row(k, types[k])));
+  form.append(h("datalist", { id: "dl_tz" }, m.timezones.map((z) => h("option", { value: z }))));
+  const read = () => Object.fromEntries(Object.entries(inputs).map(([k, { el, type }]) =>
+    [k, type === "bool" ? el.checked : type === "channels" ? [...el.selectedOptions].map((o) => o.value) : el.value]));
   return { form, read };
 }
 
 export function settingsPage(c) {
-  return wrap(c, "⚙️ Server Settings", "These are the same settings as /setup in Discord — changing them here changes the bot.", async () => {
+  return wrap(c, "Server settings", "The same settings as /setup in Discord — changing them here changes the bot.", async () => {
     const { settings } = await g("/settings");
-    const keys = ["admin_role", "franchise_owner_role", "general_manager_role", "head_coach_role", "assistant_coach_role", "log_channel", "announce_channel", "gametime_channel",
-      "matchmaking_channel", "contract_channel", "awards_channel", "league_log_channel", "suggestion_channel", "memberstats_channel", "activity_enabled", "activity_channels", "timezone"];
+    const keys = ["admin_role", "franchise_owner_role", "general_manager_role", "head_coach_role", "assistant_coach_role",
+      "log_channel", "announce_channel", "gametime_channel", "matchmaking_channel", "contract_channel", "awards_channel",
+      "league_log_channel", "suggestion_channel", "memberstats_channel", "activity_enabled", "activity_channels", "timezone"];
     const { form, read } = settingsForm(keys, settings);
     const save = h("button", { class: "btn primary", disabled: !can("admin") || null, onclick: async (e) => {
       e.target.disabled = true;
-      try { await g("/settings", { method: "PUT", body: read() }); toast("Settings saved"); } catch (err) { toast(err.errors ? Object.entries(err.errors).map(([k, v]) => `${LABELS[k] || k}: ${v}`).join(" • ") : err.message, "err"); }
+      try { await g("/settings", { method: "PUT", body: read() }); toast("Settings saved"); }
+      catch (err) { toast(err.errors ? Object.entries(err.errors).map(([k, v]) => `${LABELS[k] || k}: ${v}`).join(" · ") : err.message, "err"); }
       e.target.disabled = !can("admin");
     } }, "Save settings");
-    return h("div", { class: "card" }, form, h("div", { class: "row end" }, can("admin") ? null : h("span", { class: "sub" }, "Only admins can change settings."), save));
-  });
+    return h("div", { class: "card" }, form,
+      h("div", { class: "row end" }, can("admin") ? null : h("span", { class: "sub" }, "Only admins can change settings."), save));
+  }, "Configuration");
 }
 
 export function verificationPage(c) {
-  return wrap(c, "✅ Verification", "Members press a button to receive a role. The role can't have moderator/admin permissions.", async () => {
+  return wrap(c, "Verification", "Members press one button to receive a role. That role can never carry moderator or admin permissions.", async () => {
     const { settings } = await g("/settings");
     const { form, read } = settingsForm(["verify_role", "verify_channel"], settings);
-    return h("div", { class: "card" }, form, h("div", { class: "row end" },
-      h("button", { class: "btn", disabled: !can("admin") || null, onclick: async () => { try { await g("/settings", { method: "PUT", body: read() }); toast("Saved"); } catch (e) { toast(Object.values(e.errors || {})[0] || e.message, "err"); } } }, "Save"),
-      h("button", { class: "btn primary", disabled: !can("manager") || null, onclick: async () => { try { const r = await g("/verification/publish", { method: "POST" }); toast(r.notice || "Verification message posted", r.queued ? "warn" : ""); } catch (e) { toast(e.message, "err"); } } }, "Post verification message")));
+    return h("div", {},
+      h("div", { class: "card" }, form, h("div", { class: "row end" },
+        h("button", { class: "btn", disabled: !can("admin") || null, onclick: async () => {
+          try { await g("/settings", { method: "PUT", body: read() }); toast("Saved"); }
+          catch (e) { toast(Object.values(e.errors || {})[0] || e.message, "err"); }
+        } }, "Save"))),
+      h("div", { class: "card" }, h("h2", {}, "Publish the verification message"),
+        h("p", { class: "page-sub" }, "Posts a message with a Verify button in the channel above."),
+        h("div", { class: "row end" },
+          h("button", { class: "btn primary", disabled: !can("manager") || null, onclick: async (e) => {
+            e.target.disabled = true;
+            try { const r = await g("/verification/publish", { method: "POST" }); toast(r.notice || "Verification message posted", r.queued ? "warn" : ""); }
+            catch (err) { toast(err.message, "err"); }
+            e.target.disabled = false;
+          } }, "Post verification message"))));
+  }, "Configuration");
+}
+
+// ───────── competition hub: leagues, teams, rosters, matches, standings ─────────
+const lower = (v) => String(v ?? "").trim().toLowerCase();
+
+function leagueMatchesTeam(league, team) {
+  const key = lower(team.competition);
+  return !!key && (key === lower(league.league_name) || key === lower(league.league_abbr));
+}
+
+function teamRecordRow(t, { onChanged, compact = false } = {}) {
+  const act = async (body, label) => {
+    try {
+      await g(`/teams/${t.team_id}/record`, { method: "POST", body });
+      toast(`${t.name}: ${label}`);
+      onChanged?.();
+    } catch (e) { toast(e.message, "err"); }
+  };
+  const btn = (label, onclick, cls = "") => h("button", { class: `btn small ${cls}`, disabled: !can("staff") || null, onclick }, label);
+  const setRecord = () => {
+    const input = (k) => h("input", { type: "number", min: 0, max: 9999, value: t[k] });
+    const w = input("wins"), l = input("losses"), ti = input("ties");
+    modal(`Set ${t.name}'s record`, h("div", {}, h("label", {}, "Wins"), w, h("label", {}, "Losses"), l, h("label", {}, "Ties"), ti), [
+      { label: "Cancel", onClick: (x) => x() },
+      { label: "Save", cls: "primary", onClick: (x) => { x(); act({ action: "set", wins: +w.value, losses: +l.value, ties: +ti.value }, "record set"); } },
+    ]);
+  };
+  const history = async () => {
+    try {
+      const { items } = await g(`/teams/${t.team_id}/history`);
+      modal(`${t.name} — record history`, items.length
+        ? h("div", { class: "list" }, items.map((x) => h("div", { class: "list-row" },
+          h("b", {}, x.action), h("span", { class: "record" }, x.after ? `${x.after.wins}-${x.after.losses}-${x.after.ties}` : ""),
+          h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(x.timestamp)))))
+        : h("p", { class: "page-sub" }, "No history yet."), [{ label: "Close", onClick: (x) => x() }]);
+    } catch (e) { toast(e.message, "err"); }
+  };
+  return h("div", { class: "team-row" },
+    h("div", { class: "member-cell" },
+      t.logo ? h("img", { class: "avatar", src: t.logo, alt: "", referrerpolicy: "no-referrer" }) : h("span", { class: "team-mark" }, (t.name || "?").charAt(0)),
+      h("div", { class: "who" }, h("b", {}, t.name),
+        h("span", {}, [t.competition || "No league", t.division].filter(Boolean).join(" · ")))),
+    h("div", { class: "record" },
+      h("b", {}, `${t.wins}-${t.losses}-${t.ties}`), h("span", { class: "sub" }, ` · ${t.win_pct || ".000"}`)),
+    compact ? h("div", { class: "team-actions" },
+      h("a", { class: "btn small ghost", href: `#/g/${state.gid}/rosters` }, "Roster"))
+      : h("div", { class: "team-actions" },
+        btn("+ W", () => act({ action: "win" }, "+1 win")),
+        btn("+ L", () => act({ action: "loss" }, "+1 loss")),
+        btn("+ T", () => act({ action: "tie" }, "+1 tie")),
+        btn("Set", setRecord),
+        btn("History", history),
+        can("staff") && state.specs.teams?.update ? h("button", { class: "btn small ghost", onclick: () => openForm(state.specs.teams, t, onChanged) }, "Edit") : null,
+        can("manager") ? h("button", { class: "btn small danger", onclick: async () => {
+          if (!(await confirmDialog("Delete team", `Delete ${t.name}? Its record history and roster are removed too.`, { confirmLabel: "Delete" }))) return;
+          try { await g(`/r/teams/${t.id}`, { method: "DELETE" }); toast("Team deleted"); onChanged?.(); } catch (e) { toast(e.message, "err"); }
+        } }, "Delete") : null));
+}
+
+async function teamsBody(el) {
+  const [{ items }, leagues] = await Promise.all([
+    g("/r/teams?per_page=100"),
+    state.specs.leagues ? g("/r/leagues?per_page=100").then((r) => r.items).catch(() => []) : Promise.resolve([]),
+  ]);
+  clear(el);
+  const reload = () => { clear(el).append(spinner()); teamsBody(el); };
+  el.append(h("div", { class: "row" },
+    h("p", { class: "page-sub" }, `${items.length} team(s). Records are saved through the bot and logged in each team's history.`),
+    h("span", { class: "spacer" }),
+    state.specs.teams && can(state.specs.teams.write) ? h("button", { class: "btn primary small", onclick: () => openForm(state.specs.teams, null, reload) }, "New team") : null));
+  if (!items.length) { el.append(h("div", { class: "card empty" }, "No teams yet. Create the first one.")); return; }
+
+  const groups = new Map();
+  for (const t of items) {
+    const league = leagues.find((l) => leagueMatchesTeam(l, t));
+    const key = league ? `L:${lower(league.league_abbr || league.league_name)}` : `C:${lower(t.competition || "No league")}`;
+    if (!groups.has(key)) {
+      groups.set(key, { league, name: league ? league.league_name : (t.competition || "No league"), teams: [] });
+    }
+    groups.get(key).teams.push(t);
+  }
+  const ordered = [...groups.values()].sort((a, b) => (a.league ? 0 : 1) - (b.league ? 0 : 1) || a.name.localeCompare(b.name));
+  for (const g of ordered) {
+    el.append(h("section", { class: "league" },
+      h("div", { class: "league-head" },
+        g.league ? h("span", { class: "league-abbr" }, g.league.league_abbr) : null,
+        h("span", { class: "league-name" }, g.name),
+        h("span", { class: "league-meta" }, `${g.teams.length} team(s)`),
+        h("span", { class: "spacer" })),
+      g.teams.map((t) => teamRecordRow(t, { onChanged: reload }))));
+  }
+}
+
+async function leaguesBody(el) {
+  const [{ items: teams }, leaguesRes] = await Promise.all([
+    g("/r/teams?per_page=100"),
+    state.specs.leagues ? g("/r/leagues?per_page=100").catch((e) => ({ error: e })) : Promise.resolve({ items: [] }),
+  ]);
+  clear(el);
+  const reload = () => { clear(el).append(spinner()); leaguesBody(el); };
+  const spec = state.specs.leagues;
+  const leagues = leaguesRes.items || [];
+  el.append(h("div", { class: "row" },
+    h("p", { class: "page-sub" }, "A league is the competition your teams belong to. The bot's /league add creates one with a signup role."),
+    h("span", { class: "spacer" }),
+    spec && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openForm(spec, null, reload) }, "New league") : null));
+
+  if (!spec) {
+    el.append(h("div", { class: "card" }, h("h2", {}, "Leagues aren't available yet"),
+      h("p", { class: "page-sub" }, "The API this dashboard is talking to doesn't serve leagues. Deploy the current backend and reload.")));
+    return;
+  }
+  if (leaguesRes.error) { el.append(errorBox(leaguesRes.error)); return; }
+
+  const used = new Set();
+  for (const league of leagues) {
+    const mine = teams.filter((t) => leagueMatchesTeam(league, t));
+    mine.forEach((t) => used.add(t.id));
+    const deleteBtn = can(spec.delete) ? h("button", { class: "btn small danger", onclick: async () => {
+      if (!(await confirmDialog("Delete league", `Delete ${league.league_name}? The Discord role is left alone.`, { confirmLabel: "Delete" }))) return;
+      try { await g(`/r/leagues/${league.id}`, { method: "DELETE" }); toast("League deleted"); reload(); } catch (e) { toast(e.message, "err"); }
+    } }, "Delete") : null;
+    const head = h("div", { class: "league-head" },
+      h("span", { class: "league-abbr" }, league.league_abbr || "—"),
+      h("span", { class: "league-name" }, league.league_name),
+      h("span", { class: "league-meta" }, `${mine.length} team(s)`),
+      league.role_id ? h("span", { class: "chip" }, nameOfRole(league.role_id)) : null,
+      league.signup ? h("a", { class: "chip", href: league.signup, target: "_blank", rel: "noopener noreferrer" }, "Signup link") : null,
+      h("span", { class: "spacer" }),
+      can(spec.write) ? h("button", { class: "btn small", onclick: () => openForm(state.specs.teams, null, reload, { prefill: { competition: league.league_name } }) }, "Add team") : null,
+      can(spec.write) ? h("button", { class: "btn small ghost", onclick: () => openForm(spec, league, reload) }, "Edit") : null,
+      deleteBtn);
+    const rows = mine.length
+      ? mine.map((t) => teamRecordRow(t, { onChanged: reload, compact: true }))
+      : h("div", { class: "league-meta" }, "No teams in this league yet.");
+    el.append(h("section", { class: "league" }, head, rows));
+  }
+
+  const unassigned = teams.filter((t) => !used.has(t.id));
+  if (unassigned.length) {
+    el.append(h("section", { class: "league" },
+      h("div", { class: "league-head" },
+        h("span", { class: "league-name" }, leagues.length ? "Teams outside a league" : "All teams"),
+        h("span", { class: "league-meta" }, `${unassigned.length} team(s)`),
+        h("span", { class: "spacer" })),
+      unassigned.map((t) => teamRecordRow(t, { onChanged: reload, compact: true }))));
+  }
+  if (!teams.length) el.append(h("div", { class: "card empty" }, "No teams yet — add one from the Teams tab."));
+}
+
+export function competitionPage(c, initial = "leagues") {
+  return tabPage(c, {
+    kicker: "Competition",
+    title: "Leagues & results",
+    sub: "Leagues hold your teams; matches and standings keep the record straight.",
+    tabs: [
+      { key: "leagues", label: "Leagues", render: (el) => leaguesBody(el) },
+      { key: "teams", label: "Teams", render: (el) => teamsBody(el) },
+      { key: "rosters", label: "Rosters", render: (el) => renderResource(el, "team_members", { embedded: true }) },
+      { key: "matches", label: "Matches", render: (el) => renderResource(el, "matches", { embedded: true }) },
+      { key: "standings", label: "Standings", render: (el) => leaderboardBody(el) },
+      { key: "seasons", label: "Competitions", render: (el) => renderResource(el, "competitions", { embedded: true }) },
+      { key: "divisions", label: "Divisions", render: (el) => renderResource(el, "divisions", { embedded: true }) },
+    ],
+    initial,
   });
 }
 
-// ───────── team records ─────────
-export function recordsPage(c) {
-  return wrap(c, "🧮 Team Records", "Every change is logged in the team's history and posted to your Log channel.", async () => {
-    const { items } = await g("/r/teams?per_page=100");
-    if (!items.length) return h("div", { class: "card empty" }, "No teams yet — create one on the Teams page.");
-    const grid = h("div", { class: "grid" });
-    const draw = (t) => {
-      const card = h("div", { class: "card" });
-      const act = async (body, label) => {
-        try { const r = await g(`/teams/${t.team_id}/record`, { method: "POST", body }); toast(`${t.name}: ${label}`); const fresh = draw(r.team); card.replaceWith(fresh); } catch (e) { toast(e.message, "err"); }
-      };
-      const btn = (label, onclick, cls = "") => h("button", { class: `btn small ${cls}`, disabled: !can("staff") || null, onclick }, label);
-      card.append(h("h2", {}, t.name), h("div", { class: "sub" }, `${t.competition || "General"}${t.division ? " · " + t.division : ""}`),
-        h("div", { class: "stat" }, h("b", {}, `${t.wins}-${t.losses}-${t.ties}`), h("span", {}, `Win % ${t.win_pct || ""}`)),
-        h("div", { class: "row" }, btn("+ Win", () => act({ action: "win" }, "+1 win")), btn("+ Loss", () => act({ action: "loss" }, "+1 loss")), btn("+ Tie", () => act({ action: "tie" }, "+1 tie"))),
-        h("div", { class: "row" },
-          btn("Set…", () => {
-            const mk = (k) => h("input", { type: "number", min: 0, max: 9999, value: t[k] });
-            const w = mk("wins"), l = mk("losses"), ti = mk("ties");
-            modal(`Set ${t.name}'s record`, h("div", {}, h("label", {}, "Wins"), w, h("label", {}, "Losses"), l, h("label", {}, "Ties"), ti), [
-              { label: "Cancel", onClick: (x) => x() }, { label: "Save", cls: "primary", onClick: (x) => { x(); act({ action: "set", wins: +w.value, losses: +l.value, ties: +ti.value }, "record set"); } }]);
-          }),
-          btn("Reset", async () => { if (await confirmDialog("Reset record", `Reset ${t.name} to 0-0-0? History is kept.`, { confirmLabel: "Reset" })) act({ action: "reset" }, "reset"); }, "danger"),
-          h("button", { class: "btn small", onclick: async () => {
-            try {
-              const { items: hist } = await g(`/teams/${t.team_id}/history`);
-              modal(`${t.name} — history`, hist.length ? h("div", {}, hist.map((x) => h("div", { class: "row" }, h("b", {}, x.action), h("span", {}, x.after ? `${x.after.wins}-${x.after.losses}-${x.after.ties}` : ""), h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(x.timestamp))))) : h("p", { class: "sub" }, "No history yet."), [{ label: "Close", onClick: (x) => x() }]);
-            } catch (e) { toast(e.message, "err"); }
-          } }, "History")));
-      return card;
-    };
-    items.forEach((t) => grid.append(draw(t)));
-    return grid;
-  });
-}
-
-// ───────── leaderboard ─────────
-export function leaderboardPage(c) {
-  const sort = h("select", {}, opt("wins", "Wins"), opt("percentage", "Winning %"), opt("losses", "Fewest losses"));
-  const comp = h("select", {}, opt("", "All competitions"), state.gmeta.competitions.map((x) => opt(x, x)));
+// ───────── standings ─────────
+function leaderboardBody(c) {
+  clear(c);
+  const sort = h("select", {}, opt("wins", "Most wins"), opt("percentage", "Winning %"), opt("losses", "Fewest losses"));
+  const comp = h("select", {}, opt("", "All leagues"), state.gmeta.competitions.map((x) => opt(x, x)));
   const div = h("select", {}, opt("", "All divisions"), [...new Set(state.gmeta.divisions.map((d) => d.name))].map((x) => opt(x, x)));
   const out = h("div", {});
   const load = async () => {
     clear(out).append(spinner());
     try {
-      const { items } = await g(`/leaderboard?${new URLSearchParams({ sort: sort.value, ...(comp.value ? { competition: comp.value } : {}), ...(div.value ? { division: div.value } : {}) })}`);
-      clear(out).append(items.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Team", "Competition", "W", "L", "T", "Win %"].map((x) => h("th", {}, x)))),
-        h("tbody", {}, items.map((t) => h("tr", {}, h("td", {}, t.rank <= 3 ? ["🥇", "🥈", "🥉"][t.rank - 1] : t.rank),
-          h("td", {}, h("div", { class: "row" }, t.logo ? h("img", { class: "avatar", src: t.logo, alt: "", referrerpolicy: "no-referrer" }) : null, t.name)),
-          h("td", {}, `${t.competition || ""}${t.division ? " · " + t.division : ""}`), h("td", {}, t.wins), h("td", {}, t.losses), h("td", {}, t.ties), h("td", {}, t.pct)))))) : h("div", { class: "empty card" }, "No teams match."));
+      const qs = new URLSearchParams({ sort: sort.value, ...(comp.value ? { competition: comp.value } : {}), ...(div.value ? { division: div.value } : {}) });
+      const { items } = await g(`/leaderboard?${qs}`);
+      clear(out).append(items.length
+        ? h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["#", "Team", "League", "W", "L", "T", "Win %"].map((x, i) => h("th", { class: i > 2 ? "num" : "" }, x)))),
+          h("tbody", {}, items.map((t) => h("tr", {},
+            h("td", { class: "num" }, t.rank),
+            h("td", {}, h("div", { class: "identity" },
+              t.logo ? h("img", { class: "avatar sm", src: t.logo, alt: "", referrerpolicy: "no-referrer" }) : null, h("b", {}, t.name))),
+            h("td", {}, `${t.competition || "—"}${t.division ? " · " + t.division : ""}`),
+            h("td", { class: "num" }, t.wins), h("td", { class: "num" }, t.losses), h("td", { class: "num" }, t.ties),
+            h("td", { class: "num" }, t.pct))))))
+        : h("div", { class: "card empty" }, "No teams match those filters."));
     } catch (e) { clear(out).append(errorBox(e)); }
   };
   [sort, comp, div].forEach((s) => s.addEventListener("change", load));
-  clear(c).append(h("h1", {}, "🥇 Leaderboard"), h("p", { class: "sub" }, "Live standings. Post a self-updating one in Discord with /leaderboard post."), h("div", { class: "row card" }, sort, comp, div), out);
+  const bar = h("div", { class: "card tight row" }, sort, comp, div);
+  c.append(bar, out);
   return load();
 }
 
-// ───────── poll archive / activity / member stats ─────────
-export function pollArchivePage(c) {
-  return wrap(c, "🗄️ Poll Archive", "Closed polls and their final results.", async () => {
-    const { items } = await g("/poll-archive");
-    if (!items.length) return h("div", { class: "card empty" }, "No closed polls yet.");
-    return h("div", {}, items.map((p) => {
+// ───────── polls (+ archive) ─────────
+function pollArchiveBody(c) {
+  clear(c).append(spinner());
+  return g("/poll-archive").then(({ items }) => {
+    clear(c);
+    if (!items.length) return c.append(h("div", { class: "card empty" }, "No closed polls yet."));
+    c.append(...items.map((p) => {
       const total = p.results.reduce((a, r) => a + r.votes, 0) || 1;
-      return h("div", { class: "card" }, h("h2", {}, `#${p.poll_id} ${p.question}`), h("div", { class: "sub" }, `${p.voters} voter(s) · closed ${fmtDate(p.closed_at)}${p.anonymous ? " · anonymous" : ""}`),
-        p.results.map((r) => h("div", {}, h("div", { class: "row" }, h("span", {}, r.option), h("span", { class: "spacer" }), h("b", {}, `${r.votes} (${Math.round((r.votes / total) * 100)}%)`)), meter(r.votes / total))));
+      return h("div", { class: "card" },
+        h("h2", {}, `#${p.poll_id} ${p.question}`),
+        h("div", { class: "page-sub" }, `${p.voters} voter(s) · closed ${fmtDate(p.closed_at)}${p.anonymous ? " · anonymous" : ""}`),
+        h("div", { style: null }, p.results.map((r) => h("div", { style: null },
+          h("div", { class: "row" }, h("span", {}, r.option), h("span", { class: "spacer" }),
+            h("b", {}, `${r.votes} · ${Math.round((r.votes / total) * 100)}%`)),
+          meter(r.votes / total)))));
     }));
+  }).catch((e) => { clear(c).append(errorBox(e)); });
+}
+
+export function pollsPage(c, initial = "active") {
+  return tabPage(c, {
+    kicker: "Community",
+    title: "Polls",
+    sub: "Members vote with the buttons on the Discord message; results collect here.",
+    tabs: [
+      { key: "active", label: "Polls", render: (el) => renderResource(el, "polls", { embedded: true }) },
+      { key: "archive", label: "Archive", render: (el) => pollArchiveBody(el) },
+    ],
+    initial,
   });
 }
 
+// ───────── insights ─────────
 export function activityPage(c) {
+  clear(c).append(pageHead({ kicker: "Insights", title: "Member activity", sub: "Message counts per member, grouped by UTC day." }));
   const period = h("select", {}, opt("week", "Last 7 days"), opt("day", "Today"), opt("all", "All time"));
   const out = h("div", {});
   const load = async () => {
@@ -160,60 +366,93 @@ export function activityPage(c) {
     try {
       const d = await g(`/activity?period=${period.value}`);
       clear(out).append(
-        d.enabled ? null : h("div", { class: "card" }, h("b", {}, "Activity tracking is off."), h("p", { class: "sub" }, "Turn on “Track message activity” in Settings to start counting (bots are never counted).")),
-        h("div", { class: "card" }, h("h2", {}, "Messages per day (14 days)"), d.daily.length ? barChart(d.daily.map((x) => ({ label: x.date, value: x.count }))) : h("p", { class: "sub" }, "No data yet.")),
-        h("div", { class: "card" }, h("h2", {}, "Most active members"), d.top.length ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, d.top.map((r, i) => h("tr", {}, h("td", {}, i + 1), h("td", {}, r.name), h("td", {}, r.count.toLocaleString() + " msgs")))))) : h("p", { class: "sub" }, "Nobody yet.")));
+        d.enabled ? null : h("div", { class: "card" }, h("h2", {}, "Activity tracking is off"),
+          h("p", { class: "page-sub" }, "Turn on “Track message activity” in Server settings to start counting. Bots are never counted.")),
+        h("div", { class: "card" }, h("h2", {}, "Messages per day · last 14 days"),
+          d.daily.length ? barChart(d.daily.map((x) => ({ label: x.date, value: x.count }))) : h("p", { class: "page-sub" }, "No data yet.")),
+        h("div", { class: "card" }, h("h2", {}, "Most active members"),
+          d.top.length
+            ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, d.top.map((r, i) => h("tr", {},
+              h("td", { class: "num" }, i + 1), h("td", {}, r.name), h("td", { class: "num" }, r.count.toLocaleString()))))))
+            : h("p", { class: "page-sub" }, "Nobody yet.")));
     } catch (e) { clear(out).append(errorBox(e)); }
   };
   period.addEventListener("change", load);
-  clear(c).append(h("h1", {}, "💬 Member Activity"), h("p", { class: "sub" }, "Message counts per member (UTC days)."), h("div", { class: "row card" }, period), out);
+  c.append(h("div", { class: "card tight row" }, period), out);
   return load();
 }
 
 export function memberStatsPage(c) {
-  return wrap(c, "📈 Member Statistics", "Daily snapshots of your server's size, plus joins and leaves.", async () => {
+  return wrap(c, "Member growth", "Daily snapshots of server size, plus joins and leaves.", async () => {
     const d = await g("/memberstats?days=30");
     const last = d.snapshots.at(-1), first = d.snapshots[0];
     const stat = (n, l) => h("div", { class: "stat" }, h("b", {}, n), h("span", {}, l));
-    return h("div", {}, h("div", { class: "grid" }, stat(last ? last.total.toLocaleString() : "—", "Members now"), stat(`+${d.joined}`, "Joined (30d)"), stat(`-${d.left}`, "Left (30d)"),
-      stat(first && last ? `${last.total - first.total >= 0 ? "+" : ""}${last.total - first.total}` : "—", "Net change (30d)")),
-      h("div", { class: "card" }, h("h2", {}, "Total members"), d.snapshots.length ? barChart(d.snapshots.map((s) => ({ label: s.date, value: s.total })), (p) => `${p.label}: ${p.value}`) : h("p", { class: "sub" }, "Snapshots are taken hourly — check back soon.")),
-      h("div", { class: "card" }, h("h2", {}, "Joins per day"), d.daily.length ? barChart(d.daily.map((s) => ({ label: s.date, value: s.joined })), (p) => `${p.label}: +${p.value}`) : h("p", { class: "sub" }, "No joins recorded yet.")));
-  });
+    return h("div", {},
+      h("div", { class: "grid" },
+        stat(last ? last.total.toLocaleString() : "—", "Members now"),
+        stat(`+${d.joined}`, "Joined · 30d"),
+        stat(`−${d.left}`, "Left · 30d"),
+        stat(first && last ? `${last.total - first.total >= 0 ? "+" : ""}${last.total - first.total}` : "—", "Net change · 30d")),
+      h("div", { class: "card" }, h("h2", {}, "Total members"),
+        d.snapshots.length ? barChart(d.snapshots.map((s) => ({ label: s.date, value: s.total })), (p) => `${p.label}: ${p.value}`)
+          : h("p", { class: "page-sub" }, "Snapshots are taken hourly — check back soon.")),
+      h("div", { class: "card" }, h("h2", {}, "Joins per day"),
+        d.daily.length ? barChart(d.daily.map((s) => ({ label: s.date, value: s.joined })), (p) => `${p.label}: +${p.value}`)
+          : h("p", { class: "page-sub" }, "No joins recorded yet.")));
+  }, "Insights");
 }
 
 // ───────── moderation ─────────
 export function moderationPage(c) {
-  clear(c).append(h("h1", {}, "🛡️ Moderation"), h("p", { class: "sub" }, "Lock channels (the original @everyone permission is restored exactly on unlock) and review the log."));
+  clear(c).append(pageHead({ kicker: "Staff", title: "Moderation", sub: "Lock channels from the dashboard — the original @everyone permission is restored exactly on unlock." }));
   const ch = h("select", {}, state.gmeta.channels.filter((x) => x.type === "text").map((x) => opt(x.id, `#${x.name}`)));
   const reason = h("input", { placeholder: "Reason (optional)", maxLength: 200 });
   const locks = h("div", {});
-  const act = async (locked) => { try { const r = await g(`/channels/${ch.value}/lock`, { method: "POST", body: { locked, reason: reason.value } }); toast(r.notice || (locked ? "Channel locked" : "Channel unlocked"), r.queued ? "warn" : ""); loadLocks(); } catch (e) { toast(e.message, "err"); } };
+  const act = async (locked) => {
+    try {
+      const r = await g(`/channels/${ch.value}/lock`, { method: "POST", body: { locked, reason: reason.value } });
+      toast(r.notice || (locked ? "Channel locked" : "Channel unlocked"), r.queued ? "warn" : "");
+      loadLocks();
+    } catch (e) { toast(e.message, "err"); }
+  };
   const loadLocks = async () => {
-    try { const { items } = await g("/locks"); clear(locks).append(items.length ? h("div", {}, items.map((l) => h("div", { class: "row" }, h("b", {}, nameOfChannel(l.channel_id)), h("span", { class: "sub" }, `locked ${fmtDate(l.locked_at)} — ${l.reason || ""}`)))) : h("p", { class: "sub" }, "No channels are locked by TeamCore.")); } catch (e) { clear(locks).append(errorBox(e)); }
+    try {
+      const { items } = await g("/locks");
+      clear(locks).append(items.length
+        ? h("div", { class: "list" }, items.map((l) => h("div", { class: "list-row" },
+          h("b", {}, nameOfChannel(l.channel_id)), h("span", { class: "sub" }, `locked ${fmtDate(l.locked_at)}${l.reason ? " — " + l.reason : ""}`))))
+        : h("p", { class: "page-sub" }, "No channels are locked by TeamCore."));
+    } catch (e) { clear(locks).append(errorBox(e)); }
   };
   const logs = h("div", {});
-  c.append(h("div", { class: "card" }, h("h2", {}, "Channel lock"), h("div", { class: "row" }, ch, reason), h("div", { class: "row" },
-    h("button", { class: "btn danger", disabled: !can("manager") || null, onclick: () => act(true) }, "🔒 Lock"), h("button", { class: "btn", disabled: !can("manager") || null, onclick: () => act(false) }, "🔓 Unlock")),
-    h("h2", {}, "Currently locked"), locks), h("h2", {}, "Moderation log"), logs);
+  c.append(
+    h("div", { class: "card" }, h("h2", {}, "Lock a channel"),
+      h("div", { class: "row stretch" }, ch, reason),
+      h("div", { class: "row end" },
+        h("button", { class: "btn", disabled: !can("manager") || null, onclick: () => act(false) }, "Unlock"),
+        h("button", { class: "btn danger", disabled: !can("manager") || null, onclick: () => act(true) }, "Lock"))),
+    h("div", { class: "card" }, h("h2", {}, "Locked right now"), locks),
+    h("div", { class: "card" }, h("h2", {}, "Moderation log"), logs));
   loadLocks();
   return renderResource(logs, "moderation_logs", { embedded: true });
 }
 
 // ───────── backups ─────────
 export function backupsPage(c) {
-  return wrap(c, "💾 Backups", "Saves roles, channels, permission overwrites and basic settings. It can't save messages, members, emojis, webhooks or bans.", async () => {
+  return wrap(c, "Backups", "Saves roles, channels, permission overwrites and basic settings. Messages, members, emojis, webhooks and bans are not included.", async () => {
     const root = h("div", {});
-    const backupTable = (items) => h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Name", "Contents", "Created", ""].map((x) => h("th", {}, x)))),
-      h("tbody", {}, items.map((b) => h("tr", {},
-        h("td", {}, b.name),
-        h("td", {}, `${b.stats.roles} roles · ${b.stats.categories} categories · ${b.stats.channels} channels`),
-        h("td", {}, fmtDate(b.created_at)),
-        h("td", {}, h("div", { class: "row end" },
-          h("button", { class: "btn small", onclick: () => restore(b) }, "Restore"),
-          h("button", { class: "btn small danger", onclick: () => removeBackup(b) }, "Delete"))))))));
-    const removeBackup = async (b) => {
+    const rowFor = (b) => h("tr", {},
+      h("td", {}, b.name),
+      h("td", {}, `${b.stats.roles} roles · ${b.stats.categories} categories · ${b.stats.channels} channels`),
+      h("td", {}, fmtDate(b.created_at)),
+      h("td", {}, h("div", { class: "row end" },
+        h("button", { class: "btn small", onclick: () => restore(b) }, "Restore"),
+        h("button", { class: "btn small danger", onclick: () => remove(b) }, "Delete"))));
+    const table = (items) => h("div", { class: "table-wrap" },
+      h("table", {},
+        h("thead", {}, h("tr", {}, ["Name", "Contents", "Created", ""].map((x) => h("th", {}, x)))),
+        h("tbody", {}, items.map(rowFor))));
+    const remove = async (b) => {
       if (!(await confirmDialog("Delete backup", `Delete “${b.name}”?`, { confirmLabel: "Delete" }))) return;
       try { await g(`/backups/${encodeURIComponent(b.name)}`, { method: "DELETE" }); } catch (e) { toast(e.message, "err"); }
       draw();
@@ -221,36 +460,51 @@ export function backupsPage(c) {
     const draw = async () => {
       const { items } = await g("/backups");
       clear(root).append(
-        h("div", { class: "card row" }, h("button", { class: "btn primary", disabled: !can("admin") || null, onclick: () => {
-          const name = h("input", { placeholder: "Backup name", maxLength: 50 });
-          modal("Create backup", h("div", {}, h("label", {}, "Name"), name), [{ label: "Cancel", onClick: (x) => x() }, { label: "Create", cls: "primary", onClick: async (x) => {
-            x(); toast("Creating backup…");
-            try { const r = await g("/backups", { method: "POST", body: { name: name.value } }); toast(r.notice || "Backup saved", r.queued ? "warn" : ""); draw(); } catch (e) { toast(e.errors?.name || e.message, "err"); }
-          } }]);
-        } }, "＋ New backup")),
-        items.length ? backupTable(items) : h("div", { class: "card empty" }, "No backups yet."));
+        h("div", { class: "row" },
+          h("p", { class: "page-sub" }, `${items.length} backup(s) kept · up to 10.`),
+          h("span", { class: "spacer" }),
+          h("button", { class: "btn primary small", disabled: !can("admin") || null, onclick: () => {
+            const name = h("input", { placeholder: "e.g. before-season-4", maxLength: 50 });
+            modal("Create backup", h("div", {}, h("label", {}, "Name"), name), [
+              { label: "Cancel", onClick: (x) => x() },
+              { label: "Create", cls: "primary", onClick: async (x) => {
+                x(); toast("Creating backup…");
+                try { const r = await g("/backups", { method: "POST", body: { name: name.value } }); toast(r.notice || "Backup saved", r.queued ? "warn" : ""); draw(); }
+                catch (e) { toast(e.errors?.name || e.message, "err"); }
+              } },
+            ]);
+          } }, "New backup")),
+        items.length ? table(items) : h("div", { class: "card empty" }, "No backups yet."));
     };
     const restore = (b) => {
-      const mode = h("select", {}, opt("missing", "Add missing only (safe — nothing is deleted)"), state.gmeta && h("option", { value: "full" }, "Full restore (DELETES every channel and role first)"));
+      const mode = h("select", {}, opt("missing", "Add missing only (safe — nothing is deleted)"),
+        state.gmeta ? h("option", { value: "full" }, "Full restore (deletes every channel and role first)") : null);
       const confirmBox = h("input", { placeholder: "Type RESTORE to confirm a full restore" });
-      modal(`Restore “${b.name}”`, h("div", {}, h("label", {}, "Mode"), mode, h("label", {}, "Confirmation (full restore only — server owner only)"), confirmBox,
-        h("p", { class: "help" }, "Members will not get their roles back, and messages in deleted channels are lost for good.")), [
+      modal(`Restore “${b.name}”`, h("div", {}, h("label", {}, "Mode"), mode,
+        h("label", {}, "Confirmation — full restore only, server owner only"), confirmBox,
+        h("p", { class: "help" }, "Members do not get their roles back, and messages in deleted channels are gone for good.")), [
         { label: "Cancel", onClick: (x) => x() },
-        { label: "Restore", cls: "danger", onClick: async (x) => { x(); toast("Restoring… this can take a few minutes", "warn");
-          try { const r = await g(`/backups/${encodeURIComponent(b.name)}/restore`, { method: "POST", body: { mode: mode.value, confirm: confirmBox.value } }); const s = r.result || {}; toast(r.notice || `Done: ${s.roles_created ?? 0} roles, ${s.channels_created ?? 0} channels created`, r.queued ? "warn" : ""); }
-          catch (e) { toast(e.errors?.confirm || e.message, "err"); } } }]);
+        { label: "Restore", cls: "danger", onClick: async (x) => {
+          x(); toast("Restoring… this can take a few minutes", "warn");
+          try {
+            const r = await g(`/backups/${encodeURIComponent(b.name)}/restore`, { method: "POST", body: { mode: mode.value, confirm: confirmBox.value } });
+            const s = r.result || {};
+            toast(r.notice || `Done: ${s.roles_created ?? 0} roles and ${s.channels_created ?? 0} channels created`, r.queued ? "warn" : "");
+          } catch (e) { toast(e.errors?.confirm || e.message, "err"); }
+        } },
+      ]);
     };
     await draw();
     return root;
-  });
+  }, "Server");
 }
 
 // ───────── data export ─────────
 export function exportPage(c) {
-  return wrap(c, "📦 Data Export", "Download your server's TeamCore data. Secrets (webhook URLs) are never included.", async () => {
+  return wrap(c, "Data export", "Download this server's TeamCore data. Secrets such as webhook URLs are never included.", async () => {
     const { collections } = await g("/export/options");
     const boxes = collections.map((n) => ({ n, el: h("input", { type: "checkbox", checked: true }) }));
-    const fmt = h("select", {}, opt("json", "JSON (one file)"), opt("csv", "CSV (zip, one file per collection)"));
+    const fmt = h("select", {}, opt("json", "JSON — one file"), opt("csv", "CSV — zip, one file per collection"));
     const go = h("button", { class: "btn primary", onclick: async () => {
       const chosen = boxes.filter((b) => b.el.checked).map((b) => b.n);
       if (!chosen.length) return toast("Pick at least one collection", "err");
@@ -262,23 +516,33 @@ export function exportPage(c) {
         document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       } catch (e) { toast(e.message, "err"); }
       go.disabled = false;
-    } }, "⬇ Download");
-    return h("div", { class: "card" }, h("div", { class: "grid" }, boxes.map((b) => h("label", { class: "row" }, b.el, b.n))), h("div", { class: "row" }, fmt, go));
-  });
+    } }, "Download");
+    return h("div", { class: "card" },
+      h("h2", {}, "Collections"),
+      h("div", { class: "split" }, boxes.map((b) => h("label", { class: "row", style: null }, b.el, b.n))),
+      h("div", { class: "row end" }, fmt, go));
+  }, "Server");
 }
 
-// ───────── preferences (themes + personal timezone) ─────────
+// ───────── preferences ─────────
 export function preferencesPage(c) {
-  const accents = ["#FF7A1A", "#FF4D4D", "#F5B942", "#22C55E", "#3B82F6", "#A855F7", "#EC4899"];
+  const accents = ["#FF7A1A", "#E4572E", "#D9A404", "#4C9F70", "#3E7CB1", "#8A6FE8", "#D7488F"];
   const color = h("input", { type: "color", value: state.prefs.accent });
   const tz = h("input", { list: "dl_tz2", value: state.prefs.timezone });
   const save = async (patch) => {
-    try { state.prefs = await api("/api/me/preferences", { method: "PUT", body: patch }); setAccent(state.prefs.accent); toast("Preferences saved"); } catch (e) { toast(e.errors ? Object.values(e.errors)[0] : e.message, "err"); }
+    try { state.prefs = await api("/api/me/preferences", { method: "PUT", body: patch }); setAccent(state.prefs.accent); toast("Preferences saved"); }
+    catch (e) { toast(e.errors ? Object.values(e.errors)[0] : e.message, "err"); }
   };
-  clear(c).append(h("h1", {}, "🎨 Preferences"), h("p", { class: "sub" }, "Personal to you — they don't change the server."),
-    h("div", { class: "card" }, h("h2", {}, "Accent theme"), h("div", { class: "row" }, accents.map((a) => { const b = h("button", { class: "btn", title: a, onclick: () => { color.value = a; save({ accent: a }); } }, "  "); b.style.background = a; return b; }), color,
-      h("button", { class: "btn primary", onclick: () => save({ accent: color.value }) }, "Apply")),
-      h("h2", {}, "My timezone"), h("p", { class: "help" }, "All dates in the dashboard are shown in this timezone."),
+  clear(c).append(pageHead({ kicker: "You", title: "Preferences", sub: "Personal to your account — these never change the server." }),
+    h("div", { class: "card" }, h("h2", {}, "Accent"),
+      h("div", { class: "row" },
+        accents.map((a) => {
+          const b = h("button", { class: `btn small${a === state.prefs.accent ? " primary" : ""}`, title: a, onclick: () => { color.value = a; save({ accent: a }); } }, " ");
+          b.style.background = a; b.style.borderColor = a; b.style.width = "30px"; return b;
+        }),
+        color, h("button", { class: "btn primary", onclick: () => save({ accent: color.value }) }, "Apply"))),
+    h("div", { class: "card" }, h("h2", {}, "Timezone"),
+      h("p", { class: "page-sub" }, "Every date in the dashboard is shown in this timezone."),
       h("div", { class: "row" }, tz, h("button", { class: "btn primary", onclick: () => save({ timezone: tz.value }) }, "Save")),
       h("datalist", { id: "dl_tz2" }, (state.gmeta?.timezones || []).map((z) => h("option", { value: z })))));
 }

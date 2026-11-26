@@ -26,6 +26,8 @@ JOB_TYPES = {
     "backup_create": ["name"],
     "backup_restore": ["name", "mode"],
     "unban": ["user_id"],
+    "members_sync": [],                       # publish a compact member roster for the dashboard directory
+    "member_roles": ["user_id", "add", "remove"],  # add/remove Discord roles for one member
 }
 
 

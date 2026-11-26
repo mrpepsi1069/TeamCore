@@ -123,6 +123,15 @@ async def enrich(ctx: Ctx, res: str, items: list) -> None:
             i["url_masked"] = mask_secret(url)
     elif res == "stats_channels":
         pass
+    elif res == "leagues":
+        rows = await coll("teams").find({"guild_id": ctx.guild_id}, {"competition_lower": 1}).to_list(None)
+        counts: dict = {}
+        for r in rows:
+            key = r.get("competition_lower") or "general"
+            counts[key] = counts.get(key, 0) + 1
+        for i in items:
+            keys = {str(i.get(k) or "").strip().lower() for k in ("league_name", "league_abbr")} - {""}
+            i["team_count"] = sum(counts.get(k, 0) for k in keys)
 
 
 # ───────────── create hooks ─────────────
@@ -353,11 +362,32 @@ async def c_awards(ctx, spec, data):
     return {"item": doc}
 
 
+ABBR = re.compile(r"^[A-Z0-9]{2,10}$")
+
+
+def league_keys(doc: dict) -> set:
+    """The values a team's `competition` may hold to belong to this league."""
+    return {str(doc.get(k) or "").strip().lower() for k in ("league_name", "league_abbr")} - {""}
+
+
+async def c_leagues(ctx, spec, data):
+    abbr = data["league_abbr"].strip().upper()
+    if not ABBR.match(abbr):
+        err("The abbreviation must be 2–10 letters/numbers (e.g. NFA).")
+    if await coll("leagues").find_one({"guild_id": ctx.guild_id, "league_abbr": abbr}):
+        err("A league with that abbreviation already exists.")
+    if await coll("leagues").find_one({"guild_id": ctx.guild_id, "league_name": data["league_name"]}):
+        err("A league with that name already exists.")
+    role_ok(ctx, data.get("role_id"), "role_id")
+    return await create_default(ctx, spec, {**data, "league_abbr": abbr})
+
+
 CREATE = {"teams": c_teams, "team_members": c_roster, "player_profiles": c_team_linked, "tryouts": c_team_linked,
           "competitions": c_competitions, "divisions": c_divisions, "matches": c_matches, "polls": c_polls, "giveaways": c_giveaways,
           "countdowns": c_countdowns, "announcements": c_announcements, "role_panels": c_panels, "stats_channels": c_stats,
           "scheduled_messages": c_scheduled, "reminders": c_reminders, "workflows": c_workflows, "webhooks": c_webhooks,
-          "dashboard_permissions": c_unique_user, "staff_reports": c_author, "scouting_reports": c_author, "awards": c_awards}
+          "dashboard_permissions": c_unique_user, "staff_reports": c_author, "scouting_reports": c_author, "awards": c_awards,
+          "leagues": c_leagues}
 
 
 # ───────────── update hooks (return extra $set fields; may run follow-ups) ─────────────
@@ -376,6 +406,23 @@ async def u_teams(ctx, old, data):
 
 async def after_teams(ctx, new):
     await notify_records(ctx, new["team_id"])
+
+
+async def u_leagues(ctx, old, data):
+    extra = {}
+    if "league_abbr" in data:
+        abbr = data["league_abbr"].strip().upper()
+        if not ABBR.match(abbr):
+            err("The abbreviation must be 2–10 letters/numbers (e.g. NFA).")
+        if await coll("leagues").find_one({"guild_id": ctx.guild_id, "league_abbr": abbr, "_id": {"$ne": old["_id"]}}):
+            err("Another league already uses that abbreviation.")
+        extra["league_abbr"] = abbr
+    if "league_name" in data:
+        if await coll("leagues").find_one({"guild_id": ctx.guild_id, "league_name": data["league_name"], "_id": {"$ne": old["_id"]}}):
+            err("Another league already has that name.")
+    if "role_id" in data:
+        role_ok(ctx, data.get("role_id"), "role_id")
+    return extra
 
 
 async def u_team_linked(ctx, old, data):
@@ -403,7 +450,7 @@ async def u_channels(ctx, old, data):
     return {}
 
 
-UPDATE = {"teams": (u_teams, after_teams), "team_members": (u_team_linked, None), "player_profiles": (u_team_linked, None),
+UPDATE = {"leagues": (u_leagues, None), "teams": (u_teams, after_teams), "team_members": (u_team_linked, None), "player_profiles": (u_team_linked, None),
           "tryouts": (u_team_linked, None), "role_panels": (u_panels, after_panels), "stats_channels": (None, after_stats),
           "scheduled_messages": (u_channels, None), "workflows": (u_channels, None), "reminders": (u_channels, None)}
 
@@ -451,7 +498,13 @@ async def d_divisions(ctx, doc):
         err("Teams still use this division.", 409)
 
 
-DELETE = {"teams": d_teams, "polls": d_polls, "giveaways": d_giveaways, "countdowns": d_countdowns, "role_panels": d_panels,
+async def d_leagues(ctx, doc):
+    keys = league_keys(doc)
+    if keys and await coll("teams").find_one({"guild_id": ctx.guild_id, "competition_lower": {"$in": list(keys)}}):
+        err("Move this league's teams to another league first.", 409)
+
+
+DELETE = {"teams": d_teams, "leagues": d_leagues, "polls": d_polls, "giveaways": d_giveaways, "countdowns": d_countdowns, "role_panels": d_panels,
           "stats_channels": d_stats, "competitions": d_competitions, "divisions": d_divisions}
 
 
@@ -469,8 +522,18 @@ async def a_giveaway_reroll(ctx, doc, p):
 
 
 async def a_suggestion(ctx, doc, p, status):
-    return await bridge.run_job(ctx.guild_id, "suggestion_decide", {"suggestion_id": doc["suggestion_id"], "status": status,
-                                                                    "response": p.get("response"), "by": ctx.user["username"], "by_id": ctx.user["user_id"]}, ctx.user["user_id"])
+    """Save the decision here first (so it works even while the bot is offline), then let the bot edit the Discord
+    message and DM the author. The decision is never rolled back because Discord was slow."""
+    upd = {"status": status, "response": (p.get("response") or None), "decided_by": ctx.user["user_id"],
+           "decided_by_name": ctx.user["username"], "decided_at": now()}
+    await coll("suggestions").update_one({"_id": doc["_id"], "guild_id": ctx.guild_id}, {"$set": upd})
+    r = await bridge.run_job(ctx.guild_id, "suggestion_decide", {"suggestion_id": doc["suggestion_id"], "status": status,
+                                                                "response": p.get("response"), "by": ctx.user["username"],
+                                                                "by_id": ctx.user["user_id"]}, ctx.user["user_id"], wait=0)
+    notice = f"Suggestion #{doc['suggestion_id']} {status}."
+    if r.get("ok") is False:
+        notice += f" Discord wasn't updated: {r.get('error')}"
+    return {"ok": True, "result": {}, "notice": notice}
 
 
 async def a_appeal(ctx, doc, p, status):
@@ -612,4 +675,7 @@ async def run_action(res: str, rid: str, name: str, body: dict = Body(default={}
         raise HTTPException(422, {"errors": e.errors})
     r = await fn(ctx, doc, params)
     await audit.log(ctx, f"{res}.{name}", rid)
-    return finish({"ok": True}, r)
+    out = {"ok": True}
+    if isinstance(r, dict) and r.get("notice"):
+        out["notice"] = r["notice"]
+    return finish(out, r)

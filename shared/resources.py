@@ -186,17 +186,25 @@ def R(key: str, label: str, icon: str, group: str, collection: str, fields: list
 
 
 # ───────────── Competition ─────────────
-R("teams", "Teams", "🏆", "Competition", "teams",
-  [F("name", required=True, max=50), F("competition", picker="competition", max=50, default="General"),
+R("leagues", "Leagues", "", "Competition", "leagues",
+  [F("league_name", "str", "League name", required=True, max=100),
+   F("league_abbr", "str", "Abbreviation", required=True, max=10, help="2–10 letters/numbers, e.g. NFA (the bot also creates a role with this name)."),
+   F("signup", "url", "Signup link"), F("role_id", "snowflake", "League role", picker="role"),
+   F("team_count", "int", "Teams", readonly=True)],
+  ["league_abbr", "league_name", "role_id", "team_count"], search=["league_name", "league_abbr"], sort=["league_name", 1],
+  write="manager", delete="manager",
+  help="The same leagues as /league add in Discord. Give a team a league by setting its league to this name.")
+R("teams", "Teams", "", "Competition", "teams",
+  [F("name", required=True, max=50), F("competition", picker="competition", max=50, default="General", label="League / competition"),
    F("division", picker="division", max=50), F("logo", "url")],
   ["name", "competition", "division", "record", "win_pct"], search=["name"], sort=["name_lower", 1],
-  help="Records are changed from the Team Records page so every change is logged.")
+  help="Change a record from the Teams tab of the Competition page so every change is logged.")
 R("team_members", "Rosters", "👥", "Competition", "team_members",
   [F("team_id", "int", "Team", picker="team", required=True), F("user_id", "snowflake", "Discord user", picker="user", required=True),
    F("username", max=80), F("position", max=40), F("jersey", "int", min=0, max=999),
    F("status", "select", choices=["active", "reserve", "injured", "inactive"], default="active"), F("notes", "text", max=1000)],
   ["team_name", "username", "position", "jersey", "status"], search=["username", "position"])
-R("competitions", "Competitions", "🥇", "Competition", "competitions",
+R("competitions", "Competitions", "", "Competition", "competitions",
   [F("name", required=True, max=50, create_only=True), F("season", max=30), STATUS("active", "upcoming", "completed"), F("description", "text", max=500)],
   ["name", "season", "status"], search=["name"], write="manager", delete="manager")
 R("divisions", "Divisions", "🧩", "Competition", "divisions",
