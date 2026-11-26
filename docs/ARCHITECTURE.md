@@ -62,7 +62,9 @@ The bot's existing collections were kept (renaming would orphan live data). New 
 
 Teams are not linked to a league by an id: a team belongs to a league when its `competition` / `competition_lower` matches the league's name or abbreviation. That keeps teams created in Discord grouped correctly, and it is why a league can't be deleted while any team still matches it.
 
-A team is also a Discord role. The dashboard stores the picked colour on the team document and asks the bot (`team_role_create`) to create or re-colour `@Team name`, writing the role id back to `teams.role_id`. The sync is best-effort and never blocks a save: creating fires the job and reports the result, editing fires it only when the name or colour changed (which is also how a team created before the colour field gets its role), and deleting fires `team_role_delete` so no orphan role is left behind. A bot that is offline just leaves the job queued.
+A team is also a Discord role, whichever side creates it. From the dashboard, the picked colour is stored on the team document and the bot is asked (`team_role_create`) to create or re-colour `@Team name`; `/record create` makes the role itself, inline, in the default colour (`DEFAULT_TEAM_COLOR` in `shared/resources.py`, the same default the dashboard form offers). Either way the role id is written back to `teams.role_id`, and the role is best-effort: a bot without **Manage Roles** still creates the team, just without the role.
+
+The sync afterwards never blocks a save: editing fires the job only when the name or colour changed (which is also how a team created before the colour field gets its role), and deleting fires `team_role_delete` so no orphan role is left behind. A bot that is offline just leaves the job queued.
 
 Internal: `sessions` (hashed tokens, TTL), `oauth_states` (TTL), `bot_jobs` (TTL 24 h), `counters`, `meta` (schema version), `schedule_polls` (gametimes/times posted from the dashboard, with their message links).
 
