@@ -35,6 +35,7 @@ INDEXES = [
     ("competitions", [("guild_id", 1), ("name_lower", 1)], {"unique": True}),
     ("divisions", [("guild_id", 1), ("competition_lower", 1), ("name_lower", 1)], {"unique": True}),
     ("matches", [("guild_id", 1), ("played_at", -1)], {}),
+    ("match_shots", [("guild_id", 1), ("match_id", 1)], {"unique": True}),                     # a match's box-score screenshot
     ("events", [("guild_id", 1), ("starts_at", 1)], {}),
     ("scheduled_messages", [("enabled", 1), ("send_at", 1)], {}),
     ("scheduled_messages", [("guild_id", 1), ("send_at", 1)], {}),

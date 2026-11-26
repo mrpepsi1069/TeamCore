@@ -1,4 +1,4 @@
-// Game stats: the backend parses the report (or OCR text) and stores it; this renders it.
+// Game stats: the backend parses the Football Fusion report and stores it; this renders it.
 import { h, modal } from "./ui.js";
 
 const statLine = (stats) => Object.entries(stats || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") || "—";

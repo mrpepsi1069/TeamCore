@@ -4,6 +4,7 @@ import { api, g } from "./api.js";
 import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, barChart, meter, errorBox,
   setAccent, pageHead, tabPage } from "./ui.js";
 import { renderResource, openForm } from "./resource.js";
+import { showFusion } from "./fusion.js";
 
 const opt = (v, l, sel) => h("option", { value: v, selected: sel || null }, l);
 
@@ -354,78 +355,118 @@ async function rostersBody(el) {
   return renderResource(body, "team_members", { embedded: true });
 }
 
-// ───────── matches: import a report, or scan a screenshot ─────────
+// ───────── matches: import a report, or log a box score from its screenshot ─────────
 const SPORT_NAMES = { ff: "Football Fusion", pb: "Practical Basketball", uf: "Ultimate Football" };
-const OCR_NAMES = { google: "Google Vision", azure: "Azure Document Intelligence", local: "Tesseract (no key)" };
-const ocrName = (name) => OCR_NAMES[name] || name || "the OCR service";
+
+// Shrinks a screenshot in the browser so it stays a few hundred KB on the way to the API.
+function readShot(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / (img.width || 1600));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That image couldn't be read — use a PNG, JPEG or WebP screenshot.")); };
+    img.src = url;
+  });
+}
 
 function openStatsImport(onSaved) {
+  const teams = state.gmeta.teams || [];
   const sport = h("select", {}, Object.entries(SPORT_NAMES).map(([v, l]) => opt(v, l)));
-  const report = h("textarea", { rows: 9, maxLength: 20000, placeholder: "Paste the Football Fusion game report, or scan a screenshot and review the text here." });
+  const report = h("textarea", { rows: 9, maxLength: 20000, placeholder: "Paste the Football Fusion game report." });
   const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp" });
-  const scan = h("button", { class: "btn small", type: "button" }, "Read screenshot");
-  const scanNote = h("div", { class: "help" });
+  const preview = h("img", { class: "shot-preview hidden", alt: "Screenshot preview" });
+  const shotNote = h("div", { class: "help" });
+  const home = h("select", {}, teams.map((t) => opt(String(t.id), t.name)));
+  const away = h("select", {}, opt("", "— not in the dashboard —"), teams.map((t) => opt(String(t.id), t.name)));
+  const awayName = h("input", { type: "text", maxLength: 50, placeholder: "Opponent name" });
+  const hs = h("input", { type: "number", min: 0, max: 9999, placeholder: "88" });
+  const as_ = h("input", { type: "number", min: 0, max: 9999, placeholder: "74" });
   const when = h("input", { id: "ff-when", type: "datetime-local", value: localDateTime(new Date()) });
   const records = h("input", { type: "checkbox" });
   const err = h("div", { class: "err" });
+  let shot = null;
 
-  const read = async () => {
-    err.textContent = "";
-    const shot = file.files && file.files[0];
-    if (!shot) { err.textContent = "Choose a screenshot first."; return; }
-    if (shot.size > 6 * 1024 * 1024) { err.textContent = "That screenshot is over 6 MB — crop it or take a smaller one."; return; }
-    scan.disabled = true;
-    scanNote.textContent = "Reading the screenshot…";
-    try {
-      const image = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result);
-        r.onerror = () => reject(new Error("That file couldn't be read."));
-        r.readAsDataURL(shot);
-      });
-      const res = await g("/matches/scan", { method: "POST", body: { image, sport: sport.value } });
-      report.value = res.text || "";
-      scanNote.textContent = res.problem
-        ? `Read with ${ocrName(res.provider)}, but ${res.problem.charAt(0).toLowerCase()}${res.problem.slice(1)} Fix the text above before importing.`
-        : `Read with ${ocrName(res.provider)} — check the score and stat lines before importing.`;
-    } catch (e) {
-      err.textContent = e.errors?.image || e.errors?.sport || e.message;
-      scanNote.textContent = "";
-    }
-    scan.disabled = false;
+  const ffFields = h("div", { class: "field" }, h("label", {}, "Game report"), report,
+    h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the score is used as-is. An unknown opponent is kept as a plain name."));
+  const scoreFields = h("div", {},
+    h("div", { class: "field" }, h("label", {}, "Your team"), home),
+    h("div", { class: "field" }, h("label", {}, "Opponent"), away, awayName,
+      h("div", { class: "help" }, "Pick a dashboard team, or leave it on “not in the dashboard” and type the name.")),
+    h("div", { class: "row" },
+      h("div", { class: "field" }, h("label", {}, "Your score"), hs),
+      h("div", { class: "field" }, h("label", {}, "Opponent score"), as_)));
+
+  const sync = () => {
+    const ff = sport.value === "ff";
+    ffFields.classList.toggle("hidden", !ff);
+    scoreFields.classList.toggle("hidden", ff);
+    shotNote.textContent = ff
+      ? "Optional — attach the report screenshot too and the bot posts it with the result."
+      : "Required — the screenshot is this match's stat sheet, and the bot posts it with the result.";
   };
-  scan.addEventListener("click", read);
+  sport.addEventListener("change", sync);
+  sync();
+
+  file.addEventListener("change", async () => {
+    err.textContent = "";
+    shot = null;
+    preview.classList.add("hidden");
+    const f = file.files && file.files[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { err.textContent = "That screenshot is over 10 MB — crop it or take a smaller one."; file.value = ""; return; }
+    try {
+      const data = await readShot(f);
+      shot = data;
+      preview.src = data;
+      preview.classList.remove("hidden");
+      shotNote.textContent = `Attached (${Math.max(1, Math.round(data.length / 1024))} KB after resizing).`;
+    } catch (e) {
+      err.textContent = e.message;
+      file.value = "";
+    }
+  });
 
   const box = h("div", {},
     h("div", { class: "field" }, h("label", {}, "Sport"), sport,
-      h("div", { class: "help" }, "Football Fusion reads its game report; the other two are read from a screenshot of the box score.")),
-    h("div", { class: "field" }, h("label", {}, "Screenshot"), h("div", { class: "row" }, file, scan), scanNote),
-    h("div", { class: "field" }, h("label", {}, "Game report / scanned text"), report,
-      h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the score is used as-is. An unknown opponent is kept as a plain name."), err),
+      h("div", { class: "help" }, "Football Fusion keeps its full stat sheet from the report. The other two keep the screenshot you attach.")),
+    ffFields, scoreFields,
+    h("div", { class: "field" }, h("label", {}, "Box-score screenshot"), file, shotNote, preview),
     h("div", { class: "field" }, h("label", { for: "ff-when" }, "When it was played"), when),
-    h("label", { class: "row" }, records, " Also update team records"));
-
-  g("/matches/scan").then((res) => {
-    if (!res.providers || !Object.values(res.providers).some(Boolean)) {
-      scan.disabled = true;
-      scanNote.textContent = "Screenshot reading isn't set up on the backend yet — paste the text instead, or ask an admin to install Tesseract (no key needed).";
-    } else if (!res.providers[res.default]) {
-      scan.disabled = true;
-    }
-  }).catch(() => {});
+    h("label", { class: "row" }, records, " Also update team records"), err);
 
   modal("Import game stats", box,
     [{ label: "Cancel", onClick: (c) => c() },
       { label: "Import match", cls: "primary", onClick: async (c, btns) => {
         err.textContent = "";
-        if (!report.value.trim()) { err.textContent = "Paste the report or scan a screenshot first."; return; }
+        const ff = sport.value === "ff";
+        if (ff && !report.value.trim()) { err.textContent = "Paste the Football Fusion game report first."; return; }
+        if (!ff && !shot) { err.textContent = "Attach the box-score screenshot first."; return; }
+        const body = { sport: sport.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked };
+        if (ff) body.report = report.value;
+        else {
+          body.home_team_id = Number(home.value);
+          body.home_score = hs.value === "" ? undefined : Number(hs.value);
+          body.away_score = as_.value === "" ? undefined : Number(as_.value);
+          if (away.value) body.away_team_id = Number(away.value);
+          else body.away_name = awayName.value.trim() || undefined;
+        }
+        if (shot) body.image = shot;
         btns.forEach((b) => (b.disabled = true));
         try {
-          const res = await g("/matches/import", { method: "POST", body: { sport: sport.value, report: report.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked } });
+          const res = await g("/matches/import", { method: "POST", body });
           c(); toast(res.notice || "Match imported", res.queued ? "warn" : "");
           onSaved?.();
         } catch (e) {
-          err.textContent = e.errors?.report || e.errors?.played_at || e.errors?.sport || e.message;
+          err.textContent = e.errors?.image || e.errors?.report || e.errors?.home_team_id || e.errors?.home_score
+            || e.errors?.away_name || e.errors?.played_at || e.errors?.sport || e.message;
           btns.forEach((b) => (b.disabled = false));
         }
       } }], { wide: true });
@@ -437,12 +478,67 @@ async function matchesBody(el) {
   const spec = state.specs.matches;
   const body = h("div", {});
   el.append(h("div", { class: "row" },
-    h("p", { class: "page-sub" }, "Log a match against any opponent, import a Football Fusion report, or scan a Practical Basketball / Ultimate Football screenshot. Matches with game stats get a Stats button."),
+    h("p", { class: "page-sub" }, "Log a match against any opponent, or import a Football Fusion report / box-score screenshot. Matches with a stat sheet get Stats and Screenshot buttons."),
     h("span", { class: "spacer" }),
     spec && can(spec.write) ? h("button", { class: "btn primary small", onclick: () => openStatsImport(reload) }, "Import game stats") : null),
     body);
   return renderResource(body, "matches", { embedded: true });
 }
+
+// ───────── Football Fusion ─────────
+const statName = (s) => String(s || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+function ffPage(c) {
+  clear(c).append(pageHead({ kicker: "Competition", title: "Football Fusion",
+    sub: "Only Football Fusion game reports are parsed into stats, so this is the one place with a stat comparison leaderboard." }));
+  const comp = h("select", { onchange: () => load() }, opt("", "All competitions"), state.gmeta.competitions.map((x) => opt(x, x)));
+  const stat = h("select", { onchange: () => load() });
+  const out = h("div", {});
+  c.append(h("div", { class: "card tight filters" }, comp, stat, h("span", { class: "spacer" })), out);
+
+  async function load() {
+    clear(out).append(spinner());
+    try {
+      const res = await g(`/ff?competition=${encodeURIComponent(comp.value)}&stat=${encodeURIComponent(stat.value)}`);
+      clear(stat).append(...(res.stats.length ? res.stats.map((s) => opt(s, statName(s), s === res.stat)) : [opt("", "No stats yet")]));
+      clear(out);
+      if (!res.players.length) {
+        out.append(h("div", { class: "card empty" }, "No Football Fusion stats yet — import a game report from the Matches tab."));
+        return;
+      }
+      const leaderRows = res.players.map((p, i) => h("tr", {},
+        h("td", {}, String(i + 1)),
+        h("td", {}, h("b", {}, p.name), h("div", { class: "sub" }, p.user_id ? "Linked" : "Not linked")),
+        h("td", {}, p.team || "—"),
+        h("td", {}, p.position || "—"),
+        h("td", {}, String(p.games)),
+        h("td", {}, String(p.totals[res.stat] ?? 0)),
+        h("td", {}, String(p.averages[res.stat] ?? 0))));
+      const leaderHead = ["#", "Player", "Team", "Pos", "GP", statName(res.stat), "Per game"].map((x) => h("th", {}, x));
+      const leaders = h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, leaderHead)),
+        h("tbody", {}, leaderRows)));
+      out.append(h("h2", {}, `${statName(res.stat)} leaders`), leaders);
+
+      if (res.games.length) {
+        const gameHead = ["Date", "Match", "Score", "Reported by", ""].map((x) => h("th", {}, x));
+        const gameRows = res.games.map((gm) => h("tr", {},
+          h("td", {}, fmtDate(gm.played_at)),
+          h("td", {}, `${gm.home} vs ${gm.away}`),
+          h("td", {}, `${gm.home_score} – ${gm.away_score}`),
+          h("td", {}, gm.ff?.reporter?.name || "—"),
+          h("td", {}, h("button", { class: "btn small", onclick: () => showFusion(gm.ff) }, "Stats"))));
+        const games = h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, gameHead)),
+          h("tbody", {}, gameRows)));
+        out.append(h("h2", {}, "Recent Football Fusion games"), games);
+      }
+    } catch (e) { clear(out).append(errorBox(e)); }
+  }
+  load();
+}
+
+export { ffPage };
 
 async function leaguesBody(el) {
   const [{ items: teams }, leaguesRes] = await Promise.all([

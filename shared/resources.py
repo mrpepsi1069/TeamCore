@@ -237,9 +237,9 @@ R("matches", "Match History", "🏟️", "Competition", "matches",
    F("notes", "text", max=1000),
    F("apply_record", "bool", "Update team records", default=False, create_only=True,
      help="Adds a win/loss/tie to your team — and to the opponent's too when it's a dashboard team (logged in record history)."),
-   F("ff", "text", "Game stats", readonly=True)],
-  ["played_at", "home_name", "score", "away_name", "competition", "ff"], sort=["played_at", -1], search=["notes", "competition"],
-  check=_match_check, help="Import a Football Fusion report, or scan a Practical Basketball / Ultimate Football screenshot, from the Matches tab to attach the full game stats sheet to a match.")
+   F("ff", "text", "Game stats", readonly=True), F("shot", "bool", "Screenshot", readonly=True)],
+  ["played_at", "home_name", "score", "away_name", "competition", "ff", "shot"], sort=["played_at", -1], search=["notes", "competition"],
+  check=_match_check, help="Import a Football Fusion report to keep its full stat sheet, or log a Practical Basketball / Ultimate Football result with the box-score screenshot attached — the bot posts the screenshot with the result.")
 
 # ───────────── Community ─────────────
 R("polls", "Polls", "📊", "Community", "polls",

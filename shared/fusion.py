@@ -27,6 +27,10 @@ import re
 
 MAX_REPORT = 20_000
 
+# The sports a match can carry. Only Football Fusion exports structured stats; the other two keep a screenshot.
+SPORTS = {"ff": "Football Fusion", "pb": "Practical Basketball", "uf": "Ultimate Football"}
+DEFAULT_SPORT = "ff"
+
 _TITLE = re.compile(r"^\s*Game Report\s*[•·]\s*(.+?)\s*$", re.I)
 _IDENT = re.compile(r"^\s*Game Identifier:\s*(\S+)\s*$", re.I)
 _SCORE = re.compile(r"^\s*Score:\s*(.+?)\s+(\d{1,3})\s*[-–]\s*(\d{1,3})\s+(.+?)\s*$", re.I)

@@ -118,8 +118,15 @@ function cell(spec, col, row) {
   if (col.endsWith("_at") || ["start", "end", "date", "played_at", "send_at", "remind_at", "starts_at"].includes(col)) return fmtDate(v);
   if (col === "channel_id") return nameOfChannel(v);
   if (col === "role_id" || col === "ping_role_id" || col === "required_role_id") return nameOfRole(v);
+  if (col === "ff") return row.ff ? h("button", { class: "btn small", onclick: () => showFusion(row.ff) }, "Stats") : "—";
+  if (col === "shot") return row.shot ? h("button", { class: "btn small", onclick: async () => {
+    try {
+      const res = await g(`/matches/${row.id}/shot`);
+      modal("Stat sheet", h("div", {}, h("img", { src: res.data_url, alt: "Stat sheet", class: "stat-sheet" })),
+        [{ label: "Close", onClick: (c) => c() }], { wide: true });
+    } catch (e) { toast(e.message, "err"); }
+  } }, "Screenshot") : "—";
   if (typeof v === "boolean") return v ? "✓" : "✗";
-  if (col === "ff") return h("button", { class: "btn small", onclick: () => showFusion(row.ff) }, "Stats");
   if (col === "user_id" || col === "author_id" || col.endsWith("_user_id")) return row[col.replace("_id", "_name")] || row.username || String(v);
   if (col === "logo" || col === "image") return h("a", { href: v, target: "_blank", rel: "noopener noreferrer" }, "view");
   if (Array.isArray(v)) return v.join(", ");

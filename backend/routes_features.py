@@ -4,6 +4,7 @@ import base64
 import csv
 import io
 import json
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 
@@ -17,8 +18,7 @@ from database import teams as T
 from backend.db import db as handle
 from backend.resources import bump_team, channel_ok, finish, notify_records, post_result, role_ok
 from backend.util import now, oid, ser
-from backend.ocr import configured as ocr_configured, extract_text, pick as ocr_pick
-from shared.scan import SPORTS, parse_any
+from shared.fusion import SPORTS, parse_report
 
 router = APIRouter(prefix="/api/guilds/{gid}", tags=["features"])
 
@@ -171,69 +171,53 @@ def _report_team(name: str, teams: list) -> dict | None:
     return near[0] if len(near) == 1 else None
 
 
-def _image(body: dict) -> tuple[bytes, str]:
-    """Accept a data URL or bare base64 from the browser and return (bytes, mime)."""
-    raw = str(body.get("image") or "")
-    mime = str(body.get("mime") or "image/png")
-    if raw.startswith("data:"):
-        head, _, raw = raw.partition(",")
-        mime = head[5:].split(";")[0] or mime
+SHOT_MAX = 2_500_000   # base64 characters, after the browser shrinks the screenshot
+_SHOT = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", re.S)
+
+
+def _shot(body: dict) -> dict | None:
+    """The box-score screenshot the manager attached (a data URL), or None."""
+    raw = str(body.get("image") or "").strip()
+    if not raw:
+        return None
+    m = _SHOT.match(raw)
+    if not m:
+        raise HTTPException(422, {"errors": {"image": "Attach a PNG, JPEG or WebP screenshot."}})
+    data = re.sub(r"\s+", "", m.group(2))
+    if len(data) > SHOT_MAX:
+        raise HTTPException(422, {"errors": {"image": "That screenshot is too big — crop it or take a smaller one."}})
     try:
-        data = base64.b64decode(raw, validate=False)
+        base64.b64decode(data, validate=True)
     except (ValueError, TypeError):
-        raise HTTPException(422, {"errors": {"image": "That image couldn't be read — try a PNG or JPEG screenshot."}})
-    if not data:
-        raise HTTPException(422, {"errors": {"image": "Add a screenshot first."}})
-    return data, mime
+        raise HTTPException(422, {"errors": {"image": "That screenshot couldn't be read — try a PNG or JPEG."}})
+    return {"mime": m.group(1), "data": data, "size": len(data)}
 
 
-@router.get("/matches/scan")
-async def scan_providers(ctx: Ctx = Depends(guild_ctx)):
-    """Which OCR providers this backend can use (so the dashboard can say so before an upload)."""
-    conf = ocr_configured()
-    return {"providers": conf, "default": ocr_pick(None) if any(conf.values()) else None}
+async def _save_shot(ctx: Ctx, match_id, shot: dict) -> None:
+    await coll("match_shots").replace_one(
+        {"guild_id": ctx.guild_id, "match_id": match_id},
+        {"guild_id": ctx.guild_id, "match_id": match_id, "mime": shot["mime"], "data": shot["data"], "size": shot["size"],
+         "created_at": now(), "created_by": ctx.user["user_id"]}, upsert=True)
 
 
-@router.post("/matches/scan")
-async def scan_screenshot(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
-    """Read a screenshot and hand the text back for review — nothing is saved until the match is imported."""
-    ctx.require("staff")
-    sport = str(body.get("sport") or "ff").strip().lower()
-    if sport not in SPORTS:
-        raise HTTPException(422, {"errors": {"sport": "Pick Football Fusion, Practical Basketball or Ultimate Football."}})
-    data, mime = _image(body)
-    text, provider = await extract_text(data, mime, body.get("provider"))
-    parsed, problem = None, None
-    try:
-        parsed = parse_any(text, sport)
-    except ValueError as e:
-        problem = str(e)  # the text is still returned, so the manager can fix a misread by hand
-    return {"text": text[:20000], "provider": provider, "sport": sport, "parsed": parsed, "problem": problem}
+@router.get("/matches/{rid}/shot")
+async def match_shot(rid: str, ctx: Ctx = Depends(guild_ctx)):
+    """One match's screenshot, as a data URL for the dashboard's Screenshot button."""
+    doc = await coll("match_shots").find_one({"guild_id": ctx.guild_id, "match_id": oid(rid)})
+    if not doc:
+        raise HTTPException(404, "This match has no screenshot.")
+    return {"data_url": f"data:{doc['mime']};base64,{doc['data']}", "size": doc.get("size")}
 
 
 @router.post("/matches/import")
 async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
-    """Import a Football Fusion report or a scanned box score as a match, storing its full stat sheet on the match."""
+    """Import a Football Fusion report, or log any sport's match from a box-score screenshot."""
     ctx.require("staff")
     sport = str(body.get("sport") or "ff").strip().lower()
     if sport not in SPORTS:
         raise HTTPException(422, {"errors": {"sport": "Pick Football Fusion, Practical Basketball or Ultimate Football."}})
-    try:
-        game = parse_any(str(body.get("report") or body.get("text") or ""), sport)
-    except ValueError as e:
-        raise HTTPException(422, {"errors": {"report": str(e)}})
+    shot = _shot(body)
     teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
-    side = game["score"]
-    home, away = _report_team(side["home"], teams), _report_team(side["away"], teams)
-    if not home and not away:
-        raise HTTPException(422, {"errors": {"report": f"Neither “{side['home']}” nor “{side['away']}” matches a team in the dashboard — add one of them first."}})
-    hs, as_ = side["home_score"], side["away_score"]
-    away_name = ""
-    if home:
-        away_name = "" if away else side["away"]
-    else:  # the dashboard team was the second side, so it becomes home and the scores swap
-        home, away, away_name = away, None, side["home"]
-        hs, as_ = as_, hs
     picked = now()
     if body.get("played_at"):
         try:
@@ -241,17 +225,118 @@ async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
         except ValueError:
             raise HTTPException(422, {"errors": {"played_at": "Use a valid date and time."}})
         picked = picked.astimezone(timezone.utc) if picked.tzinfo else picked.replace(tzinfo=timezone.utc)
+
+    if sport == "ff":
+        try:
+            game = parse_report(str(body.get("report") or ""))
+        except ValueError as e:
+            raise HTTPException(422, {"errors": {"report": str(e)}})
+        game["sport"] = "ff"
+        side = game["score"]
+        home, away = _report_team(side["home"], teams), _report_team(side["away"], teams)
+        if not home and not away:
+            raise HTTPException(422, {"errors": {"report": f"Neither “{side['home']}” nor “{side['away']}” matches a team in the dashboard — add one of them first."}})
+        hs, as_ = side["home_score"], side["away_score"]
+        away_name = ""
+        if home:
+            away_name = "" if away else side["away"]
+        else:  # the dashboard team was the second side, so it becomes home and the scores swap
+            home, away, away_name = away, None, side["home"]
+            hs, as_ = as_, hs
+        competition, label = body.get("competition") or home.get("competition"), game.get("game") or SPORTS["ff"]
+    else:
+        # No OCR: the screenshot is the stat sheet, so the manager types the score and picks the teams.
+        if not shot:
+            raise HTTPException(422, {"errors": {"image": "Attach the box-score screenshot — it's stored as this match's stat sheet."}})
+        home = next((t for t in teams if str(t.get("team_id")) == str(body.get("home_team_id"))), None)
+        if not home:
+            raise HTTPException(422, {"errors": {"home_team_id": "Pick the team the match belongs to."}})
+        away = next((t for t in teams if str(t.get("team_id")) == str(body.get("away_team_id"))), None) if body.get("away_team_id") else None
+        try:
+            hs, as_ = int(body.get("home_score")), int(body.get("away_score"))
+        except (TypeError, ValueError):
+            hs = as_ = -1
+        if not (0 <= hs <= 9999 and 0 <= as_ <= 9999):
+            raise HTTPException(422, {"errors": {"home_score": "Enter both teams' scores."}})
+        away_name = "" if away else str(body.get("away_name") or "").strip()[:50]
+        if not away and not away_name:
+            raise HTTPException(422, {"errors": {"away_name": "Pick the opponent or type its name."}})
+        competition = body.get("competition") or home.get("competition")
+        label = SPORTS[sport]
+        game = {"sport": sport, "score": {"home": home["name"], "home_score": hs,
+                                          "away": away["name"] if away else away_name, "away_score": as_}}
+
     try:
-        doc, updated = await T.log_match(handle(), ctx.guild_id, home, away, hs, as_, body.get("competition") or home.get("competition"),
+        doc, updated = await T.log_match(handle(), ctx.guild_id, home, away, hs, as_, competition,
                                          picked, "", bool(body.get("apply_record")), ctx.user["user_id"], away_name=away_name, ff=game)
     except T.TeamError as e:
         raise HTTPException(422, {"errors": {"report": str(e)}})
+    if shot:
+        await _save_shot(ctx, doc["_id"], shot)
     for t in updated:
         await notify_records(ctx, t["team_id"])
     opponent = away["name"] if away else away_name
-    await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({game.get('game') or SPORTS[sport]})")
+    await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({label})")
     await post_result(ctx, doc["_id"])  # results channel, if the server has one — never blocks on Discord
-    return {"item": ser(doc), "notice": f"Imported {game.get('game') or 'the match'}: {home['name']} {hs}–{as_} {opponent}."}
+    return {"item": ser(doc), "notice": f"Imported {label}: {home['name']} {hs}–{as_} {opponent}" + (" — screenshot attached." if shot else ".")}
+
+
+@router.get("/ff")
+async def ff_stats(stat: str = "", competition: str = "", ctx: Ctx = Depends(guild_ctx)):
+    """Football Fusion only: per-player stat totals from parsed game reports, plus the recent FF games."""
+    q = {"guild_id": ctx.guild_id, "ff": {"$type": "object"},
+         "$or": [{"ff.sport": {"$exists": False}}, {"ff.sport": "ff"}]}
+    if competition:
+        q["competition"] = {"$regex": f"^{re.escape(competition)}$", "$options": "i"}  # matches store no lowercase copy
+    matches = await coll("matches").find(q).sort("played_at", -1).limit(500).to_list(None)
+    teams = {t["team_id"]: t.get("name") for t in await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)}
+    roster: dict = {}
+    for m in await coll("team_members").find({"guild_id": ctx.guild_id}).to_list(None):
+        if str(m.get("user_id") or "") not in roster:
+            roster[str(m.get("user_id"))] = teams.get(m.get("team_id"))
+
+    rows: dict = {}
+    seen: dict = {}
+    for match in matches:
+        for p in (match.get("ff") or {}).get("players") or []:
+            name = str(p.get("name") or "").strip()
+            if not name:
+                continue
+            who = str(p.get("user_id")) if p.get("user_id") else "name:" + name.lower()
+            positions = p.get("positions") or {}
+            if not positions and isinstance(p.get("stats"), dict):
+                positions = {"—": p["stats"]}
+            for pos, stats in positions.items():
+                if not isinstance(stats, dict):
+                    continue
+                row = rows.setdefault((who, pos), {"name": name, "user_id": p.get("user_id"), "position": pos,
+                                                   "team": roster.get(who), "games": set(), "totals": {}})
+                row["games"].add(str(match["_id"]))
+                for k, v in stats.items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        row["totals"][k] = row["totals"].get(k, 0) + v
+                        seen[k] = seen.get(k, 0) + 1
+
+    players = []
+    for row in rows.values():
+        gp = len(row["games"])
+        players.append({"name": row["name"], "user_id": row["user_id"], "position": row["position"], "team": row["team"],
+                        "games": gp, "totals": row["totals"],
+                        "averages": {k: round(v / gp, 1) for k, v in row["totals"].items()} if gp else {}})
+    keys = sorted(seen)
+    chosen = stat if stat in seen else (max(keys, key=lambda k: (seen[k], k)) if keys else "")
+    if chosen:
+        players.sort(key=lambda r: (-r["totals"].get(chosen, 0), r["name"].lower()))
+
+    games = []
+    for m in matches[:20]:
+        ff = m.get("ff") or {}
+        side = ff.get("score") or {}
+        games.append({"id": str(m["_id"]), "played_at": m.get("played_at"), "competition": m.get("competition"),
+                      "home": teams.get(m.get("home_team_id")) or side.get("home") or "?",
+                      "away": teams.get(m.get("away_team_id")) or m.get("away_name") or side.get("away") or "?",
+                      "home_score": m.get("home_score"), "away_score": m.get("away_score"), "ff": ff})
+    return {"stats": keys, "stat": chosen, "players": players[:100], "games": games}
 
 
 @router.get("/leaderboard")

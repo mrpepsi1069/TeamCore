@@ -41,10 +41,3 @@ JOB_WAIT_SECONDS = float(os.getenv("JOB_WAIT_SECONDS", "10"))
 DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY", "")
 
 BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "")
-
-# Screenshot reading for match imports (optional). Two providers, both plain REST: Google Cloud Vision, or Azure AI
-# Document Intelligence (text + tables). An empty OCR_PROVIDER uses whichever one has keys.
-OCR_PROVIDER = os.getenv("OCR_PROVIDER", "").strip().lower()
-GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
-AZURE_DOC_ENDPOINT = os.getenv("AZURE_DOC_ENDPOINT", "").rstrip("/")
-AZURE_DOC_KEY = os.getenv("AZURE_DOC_KEY", "")

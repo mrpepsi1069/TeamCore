@@ -6,6 +6,8 @@ aren't available it falls back to a slow poll. The bot works fine without the we
 """
 
 import asyncio
+import base64
+import io
 import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -330,8 +332,7 @@ class DashboardBridge(commands.Cog):
     async def post_result(self, guild, match_id) -> dict:
         """Post one match's summary (and its game stats, when it has them) to the server's results channel."""
         from bson import ObjectId
-        from shared.fusion import stat_line
-        from shared.scan import SPORTS
+        from shared.fusion import SPORTS, stat_line
         cfg = await db.get_guild_config(str(guild.id)) or {}
         cid = cfg.get("results_channel")
         if not cid:
@@ -375,8 +376,20 @@ class DashboardBridge(commands.Cog):
             e.set_footer(text=f"{guild.name} · {ff.get('linked') or 0}/{ff.get('total')} players linked")
         else:
             e.set_footer(text=guild.name)
+        # The stat sheet itself: a screenshot attached on import, posted with the result.
+        shot = await db.col("match_shots").find_one({"guild_id": str(guild.id), "match_id": d["_id"]})
+        file = None
+        if shot and shot.get("data"):
+            ext = {"image/png": "png", "image/webp": "webp"}.get(shot.get("mime"), "jpg")
+            try:
+                raw = base64.b64decode(shot["data"])
+            except (ValueError, TypeError):
+                raw = b""
+            if raw and len(raw) <= 8 * 1024 * 1024:
+                file = discord.File(io.BytesIO(raw), filename=f"stat-sheet.{ext}")
+                e.set_image(url=f"attachment://stat-sheet.{ext}")
         ch = self._text(guild, cid)
-        msg = await ch.send(embed=e)
+        msg = await ch.send(embed=e, file=file) if file else await ch.send(embed=e)
         return {"posted": True, "message": msg.jump_url}
 
     async def job_stats_refresh(self, guild, p, job):

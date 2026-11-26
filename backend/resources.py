@@ -117,6 +117,14 @@ async def enrich(ctx: Ctx, res: str, items: list) -> None:
                 # an opponent that isn't a dashboard team is stored as a plain name
                 i["away_name"] = names.get(i.get("away_team_id")) or i.get("away_name") or "?"
                 i["score"] = f"{i['home_score']} – {i['away_score']}"
+    if res == "matches" and items:
+        shot_ids = [i["_id"] for i in items if i.get("_id") is not None]
+        have = set()
+        if shot_ids:
+            rows = await coll("match_shots").find({"guild_id": ctx.guild_id, "match_id": {"$in": shot_ids}}, {"match_id": 1}).to_list(None)
+            have = {r["match_id"] for r in rows}
+        for i in items:
+            i["shot"] = i.get("_id") in have
     if res == "polls":
         c = await _counts("poll_votes", "poll_id", ctx, [i["poll_id"] for i in items])
         for i in items:
@@ -596,8 +604,12 @@ async def d_leagues(ctx, doc):
         err("Move this league's teams to another league first.", 409)
 
 
+async def d_matches(ctx, doc):
+    await coll("match_shots").delete_many({"guild_id": ctx.guild_id, "match_id": doc["_id"]})
+
+
 DELETE = {"teams": d_teams, "leagues": d_leagues, "polls": d_polls, "giveaways": d_giveaways, "countdowns": d_countdowns, "role_panels": d_panels,
-          "stats_channels": d_stats, "competitions": d_competitions, "divisions": d_divisions}
+          "stats_channels": d_stats, "competitions": d_competitions, "divisions": d_divisions, "matches": d_matches}
 
 
 # ───────────── actions ─────────────

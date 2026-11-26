@@ -22,7 +22,7 @@ Cloudflare Pages, Netlify, Vercel etc.: publish the `frontend/` folder (no build
 Any Python host (Render, Railway, Fly.io, a VPS…). Install `backend/requirements.txt`.
 * Start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 * Environment: `MONGODB_URI`, `MONGODB_DB`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `BACKEND_URL`, `FRONTEND_URL`, `DATA_ENCRYPTION_KEY` (+ optional `ALLOWED_ORIGINS`, `SESSION_TTL_DAYS`).
-* Screenshot reading (optional, for importing match screenshots). No key needed: install the Tesseract program (`apt-get install -y tesseract-ocr`); `pytesseract` and `Pillow` come from `backend/requirements.txt`. Cloud providers are better on stylised game fonts: `GOOGLE_VISION_API_KEY` (Cloud Vision API enabled on that key's project), or `AZURE_DOC_ENDPOINT` + `AZURE_DOC_KEY` (Azure AI Document Intelligence, `prebuilt-layout`). Pick one with `OCR_PROVIDER=google|azure|local`; with it unset the best available is used (cloud key first, Tesseract last). Hosts that can't install system packages should use a cloud key. Keys stay on the backend — the dashboard uploads the image to the API.
+* Box-score screenshots (optional): stored in the `match_shots` collection (the browser shrinks them to at most 1600 px / JPEG first) and posted with the result. No OCR service, key or system package is involved. If you ever clear old matches manually, delete their `match_shots` rows too.
 * **Do not** set `DISCORD_TOKEN` here. Serve it over HTTPS only (Discord requires an HTTPS redirect URI outside localhost).
 * Free hosts sleep when idle — the first request after a nap takes ~30 s. The site shows a loading state; use a paid instance for production.
 * Health check: `GET /health`.

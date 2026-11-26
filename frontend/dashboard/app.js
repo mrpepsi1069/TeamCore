@@ -29,12 +29,13 @@ const COMPETITION_TABS = {
   competitions: "seasons", divisions: "divisions", matches: "matches", leaderboard: "standings",
 };
 for (const [key, tab] of Object.entries(COMPETITION_TABS)) CUSTOM[key] = ["Teams & games", "viewer", (c) => P.competitionPage(c, tab)];
+CUSTOM.ff = ["Football Fusion", "viewer", (c) => P.ffPage(c)];
 CUSTOM.polls = ["Polls", "viewer", (c) => P.pollsPage(c, "active")];
 CUSTOM.poll_archive = ["Polls", "viewer", (c) => P.pollsPage(c, "archive")];
 
 const NAV = [
   ["", ["overview"]],
-  ["Club", ["members", "competition"]],
+  ["Club", ["members", "competition", "ff"]],
   ["Community", ["polls", "giveaways", "suggestions", "announcements", "role_panels"]],
   ["Scheduling", ["schedule", "events", "countdowns", "scheduled_messages", "reminders"]],
   ["Players", ["player_profiles", "tryouts", "awards", "scouting_reports", "hall_of_fame"]],
