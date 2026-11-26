@@ -89,6 +89,13 @@ class Record(commands.Cog):
         if not view.value:
             return await interaction.edit_original_response(content="Cancelled.", embed=None, view=None)
         gid = str(interaction.guild_id)
+        rid = str(t.get("role_id") or "")
+        role = interaction.guild.get_role(int(rid)) if rid.isdigit() else None
+        if role is not None:  # the team's role goes with it
+            try:
+                await role.delete(reason="TeamCore: team deleted")
+            except discord.HTTPException:
+                pass
         await db.col("teams").delete_one({"guild_id": gid, "team_id": t["team_id"]})
         await db.col("team_history").delete_many({"guild_id": gid, "team_id": t["team_id"]})
         await db.col("stats_channels").delete_many({"guild_id": gid, "key": f"team:{t['team_id']}"})  # channel is cleaned up by /stats on next update

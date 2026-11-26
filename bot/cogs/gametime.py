@@ -8,6 +8,7 @@ from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_coach_perms
 from utils.channels import poll_channel
+from utils.schedule import record_schedule
 import database as db
 
 _poll_locks: dict[int, asyncio.Lock] = {}
@@ -186,6 +187,8 @@ class Gametime(commands.Cog):
             str(interaction.guild_id), league, time,
             str(msg.id), str(channel.id), str(role.id), str(interaction.user.id),
         )
+        # so the dashboard's Scheduling page lists polls made from Discord too
+        await record_schedule(interaction.guild, "gametime", league, [time], role, channel, msg, interaction.user.id)
 
         # DM role members (role.members is only complete once the guild's member list is loaded)
         dm_count = await dm_gametime_voters(interaction.guild, role, league, time, jump, str(msg.id))

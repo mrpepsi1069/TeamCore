@@ -43,8 +43,8 @@ function recent(view, kind) {
   const rows = view.items.filter((i) => i.kind === kind);
   if (!rows.length) {
     return h("div", { class: "card empty" }, kind === "gametime"
-      ? "No gametimes posted from the dashboard yet."
-      : "No time polls posted from the dashboard yet.");
+      ? "No gametimes posted yet — from here or with /gametime."
+      : "No time polls posted yet — from here or with /times.");
   }
   const body = rows.map((i) => h("tr", {},
     h("td", {}, h("b", {}, i.league || "—")),

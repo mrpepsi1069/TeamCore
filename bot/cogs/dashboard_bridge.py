@@ -15,6 +15,7 @@ from discord.ext import commands, tasks
 
 import database as db
 from shared.jobs import DONE, FAILED, PENDING, RUNNING
+from utils.schedule import record_schedule
 
 
 class JobError(Exception):
@@ -272,13 +273,8 @@ class DashboardBridge(commands.Cog):
         return role
 
     async def _record_schedule(self, guild, kind, league, times, role, channel, msg, job):
-        """What the dashboard page lists. The poll itself lives in the message, like the slash commands."""
-        await db.col("schedule_polls").insert_one({
-            "guild_id": str(guild.id), "kind": kind, "league": league, "times": list(times),
-            "role_id": str(role.id), "role_name": role.name,
-            "channel_id": str(channel.id), "message_id": str(msg.id), "url": msg.jump_url,
-            "created_by": str(job.get("created_by") or ""), "created_at": _now(),
-        })
+        """What the dashboard page lists — the same row the slash commands write."""
+        await record_schedule(guild, kind, league, times, role, channel, msg, job.get("created_by") or "")
 
     def _later(self, coro) -> None:
         """Run something after the job has answered — mass DMs are far too slow to make the browser wait."""
@@ -610,6 +606,18 @@ class DashboardBridge(commands.Cog):
         await db.col("teams").update_one({"guild_id": str(guild.id), "team_id": d["team_id"]},
                                           {"$set": {"role_id": str(role.id)}})
         return {"role_id": str(role.id), "name": role.name}
+
+    async def job_team_role_delete(self, guild, p, job):
+        """A deleted team must not leave its role behind."""
+        rid = str(p["role_id"] or "")
+        role = guild.get_role(int(rid)) if rid.isdigit() else None
+        if role is None:
+            return {"deleted": False}   # already gone, nothing to do
+        try:
+            await role.delete(reason="TeamCore: team deleted")
+        except discord.Forbidden:
+            raise JobError("I'm not allowed to delete that role.")
+        return {"deleted": True, "name": role.name}
 
     async def job_unban(self, guild, p, job):
         try:

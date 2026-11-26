@@ -419,8 +419,12 @@ async def u_teams(ctx, old, data):
     return extra
 
 
-async def after_teams(ctx, new):
+async def after_teams(ctx, new, old=None):
     await notify_records(ctx, new["team_id"])
+    # A team is also a Discord role: keep it in step with the name and colour. A team saved before the colour field
+    # existed has neither, so this is also how it gets its role in the first place.
+    if old is not None and (new.get("name") != old.get("name") or new.get("color") != old.get("color")):
+        await bridge.run_job(ctx.guild_id, "team_role_create", {"team_id": str(new["team_id"])}, ctx.user["user_id"], wait=0)
 
 
 async def u_leagues(ctx, old, data):
@@ -451,11 +455,11 @@ async def u_panels(ctx, old, data):
     return extra
 
 
-async def after_panels(ctx, new):
+async def after_panels(ctx, new, old=None):
     return await bridge.run_job(ctx.guild_id, "publish", {"kind": "role_panel", "ref": new["panel_id"]}, ctx.user["user_id"])
 
 
-async def after_stats(ctx, new):
+async def after_stats(ctx, new, old=None):
     return await bridge.run_job(ctx.guild_id, "stats_refresh", {}, ctx.user["user_id"])
 
 
@@ -473,6 +477,8 @@ UPDATE = {"leagues": (u_leagues, None), "teams": (u_teams, after_teams), "team_m
 # ───────────── delete hooks ─────────────
 async def d_teams(ctx, doc):
     gid = ctx.guild_id
+    if str(doc.get("role_id") or "").isdigit():
+        await bridge.run_job(gid, "team_role_delete", {"role_id": str(doc["role_id"])}, ctx.user["user_id"], wait=0)
     await T.delete_team(handle(), gid, doc)
     return await bridge.run_job(gid, "stats_refresh", {}, ctx.user["user_id"], wait=0)  # bot removes the now-invalid channel
 
@@ -645,7 +651,7 @@ async def update_item(res: str, rid: str, body: dict = Body(...), ctx: Ctx = Dep
     new = await c.find_one({"_id": old["_id"]})
     out = {"item": ser(new)}
     if post:
-        r = await post(ctx, new)
+        r = await post(ctx, new, old)   # post hooks get the previous document so they can spot real changes
         if isinstance(r, dict) and "ok" in r:
             finish(out, r)
     await audit.log(ctx, f"{res}.update", rid, {"fields": list(data)})

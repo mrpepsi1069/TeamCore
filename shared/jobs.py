@@ -30,7 +30,8 @@ JOB_TYPES = {
     "member_roles": ["user_id", "add", "remove"],  # add/remove Discord roles for one member
     "gametime_create": ["league", "time", "role_id", "dm"],  # post a /gametime poll from the dashboard
     "times_create": ["league", "times", "role_id"],          # post a /times poll from the dashboard
-    "team_role_create": ["team_id"],          # create (or re-colour) the Discord role that represents a team
+    "team_role_create": ["team_id"],          # create (or re-name/re-colour) the Discord role that represents a team
+    "team_role_delete": ["role_id"],          # remove a deleted team's role
 }
 
 

@@ -8,6 +8,7 @@ from discord.ext import commands
 from utils.embeds import success_embed, error_embed
 from utils.permissions import has_manager_perms
 from utils.channels import poll_channel
+from utils.schedule import record_schedule
 
 
 _poll_locks: dict[int, asyncio.Lock] = {}
@@ -97,12 +98,14 @@ class Times(commands.Cog):
 
         channel = await poll_channel(interaction)
         try:
-            await channel.send(
+            msg = await channel.send(
                 content=role.mention,
                 embed=embed,
                 view=view,
                 allowed_mentions=discord.AllowedMentions(roles=True),
             )
+            # so the dashboard's Scheduling page lists polls made from Discord too
+            await record_schedule(interaction.guild, "times", league, time_options, role, channel, msg, interaction.user.id)
 
             await interaction.followup.send(
                 embed=success_embed(
