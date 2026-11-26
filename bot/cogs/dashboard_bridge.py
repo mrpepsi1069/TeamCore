@@ -376,20 +376,27 @@ class DashboardBridge(commands.Cog):
             e.set_footer(text=f"{guild.name} · {ff.get('linked') or 0}/{ff.get('total')} players linked")
         else:
             e.set_footer(text=guild.name)
-        # The stat sheet itself: a screenshot attached on import, posted with the result.
+        # The stat sheet itself: every screenshot attached on import (or added later from the match's edit dialog).
         shot = await db.col("match_shots").find_one({"guild_id": str(guild.id), "match_id": d["_id"]})
-        file = None
-        if shot and shot.get("data"):
-            ext = {"image/png": "png", "image/webp": "webp"}.get(shot.get("mime"), "jpg")
-            try:
-                raw = base64.b64decode(shot["data"])
-            except (ValueError, TypeError):
-                raw = b""
-            if raw and len(raw) <= 8 * 1024 * 1024:
-                file = discord.File(io.BytesIO(raw), filename=f"stat-sheet.{ext}")
-                e.set_image(url=f"attachment://stat-sheet.{ext}")
+        files = []
+        if shot:
+            images = [i for i in (shot.get("images") or []) if isinstance(i, dict) and i.get("data")]
+            if not images and shot.get("data"):   # documents written before a match could hold several images
+                images = [{"mime": shot.get("mime"), "data": shot["data"]}]
+            for n, image in enumerate(images[:8], 1):
+                ext = {"image/png": "png", "image/webp": "webp"}.get(image.get("mime"), "jpg")
+                try:
+                    raw = base64.b64decode(image["data"])
+                except (ValueError, TypeError):
+                    continue
+                if not raw or len(raw) > 8 * 1024 * 1024:
+                    continue
+                name = f"stat-sheet.{ext}" if len(images) == 1 else f"stat-sheet-{n}.{ext}"
+                files.append(discord.File(io.BytesIO(raw), filename=name))
+            if files:
+                e.set_image(url=f"attachment://{files[0].filename}")
         ch = self._text(guild, cid)
-        msg = await ch.send(embed=e, file=file) if file else await ch.send(embed=e)
+        msg = await ch.send(embed=e, files=files) if files else await ch.send(embed=e)
         return {"posted": True, "message": msg.jump_url}
 
     async def job_stats_refresh(self, guild, p, job):

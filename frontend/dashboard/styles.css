@@ -413,3 +413,4 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Screenshots: the box-score image previewed in the import dialog and opened from Matches. */
 .shot-preview { display: block; max-width: 100%; max-height: 220px; margin-top: 6px; border-radius: 8px; }
 .stat-sheet { display: block; max-width: 100%; border-radius: 8px; }
+.shot-gallery > div + div { margin-top: 14px; }

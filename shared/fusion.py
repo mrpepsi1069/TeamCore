@@ -17,9 +17,15 @@ Football Fusion copies a plain-text report, e.g.:
     ...
     Linked players: 7/17
 
-`parse_report` turns that into one dict (score, reporter, players with per-position stats) that a match
+or the shorter export, a score followed by the whole stat sheet as JSON:
+
+    27 - 25 /// {"3907432": {"other": {"team": "New York Greats", "display": "Snakestream", …}, "qb": {…}, …}, …}
+
+`parse_report` turns either into one dict (score, reporter, players with per-position stats) that a match
 stores and the dashboard renders. It tolerates missing extras: the score and at least one player are required.
-The parser is pure (no database or Discord imports), so the bot can reuse it.
+The short export never says which score belongs to which team, so its score carries `sides: "unconfirmed"`
+and the import dialog lets the manager flip it before saving. The parser is pure (no database or Discord
+imports), so the bot can reuse it.
 """
 
 import json
@@ -40,6 +46,7 @@ _PLAYER = re.compile(r"^\s*\d+\.\s+(.+?)\s+\((?:<@!?(\d{15,21})>|Not linked)\)\s
 _POSITION = re.compile(r"^\s*\[([A-Za-z0-9]{1,6})\]\s*$")
 _STAT = re.compile(r"^\s{4,}([a-z_]+):\s*(-?\d+)\s*$", re.I)
 _LINKED = re.compile(r"^\s*Linked players:\s*(\d+)\s*/\s*(\d+)\s*$", re.I)
+_SCORE_JSON = re.compile(r"^\s*(\d{1,3})\s*[-–]\s*(\d{1,3})\s*///\s*(.+?)\s*$", re.S)
 
 
 def _unwrap(text: str) -> str:
@@ -58,6 +65,44 @@ def _unwrap(text: str) -> str:
     return t
 
 
+def _json_sheet(home_score: int, away_score: int, blob: str) -> dict:
+    """The short export: “27 - 25 /// {players…}”. Each player carries their team and per-position stats; the
+    score is only a pair of numbers, so it is paired with the two teams in the order they appear and flagged as
+    unconfirmed — the import dialog asks which side the manager's team is and can flip the score."""
+    try:
+        data = json.loads(blob)
+    except ValueError:
+        raise ValueError("That stat sheet isn't valid JSON — copy it again straight from Football Fusion.")
+    if not isinstance(data, dict) or not data:
+        raise ValueError("That stat sheet has no players in it.")
+    players, teams = [], []
+    for row in data.values():
+        if not isinstance(row, dict):
+            continue
+        extra = row.get("other") if isinstance(row.get("other"), dict) else {}
+        name = str(extra.get("display") or extra.get("name") or "").strip()
+        if not name:
+            continue
+        team = str(extra.get("team") or "").strip()
+        if team and team.lower() != "nil" and team not in teams:
+            teams.append(team)
+        positions = {}
+        for pos, stats in row.items():
+            if pos == "other" or not isinstance(stats, dict):
+                continue
+            kept = {str(k): v for k, v in stats.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            if kept:
+                positions[str(pos).upper()] = kept
+        players.append({"name": name, "user_id": None, "positions": positions, "team": team or None})
+    if not players:
+        raise ValueError("Couldn't find any player stats in that stat sheet.")
+    if len(teams) < 2:
+        raise ValueError("Couldn't find both teams in that stat sheet — it needs players from two teams.")
+    return {"game": None, "identifier": None, "reporter": None, "players": players, "linked": 0, "total": len(players),
+            "score": {"home": teams[0], "home_score": home_score, "away": teams[1], "away_score": away_score,
+                      "sides": "unconfirmed"}}
+
+
 def parse_report(text: str) -> dict:
     """Text report -> {game, identifier, score, reporter, players, linked, total}. Raises ValueError with a
     user-facing message when the score or player list is missing."""
@@ -66,6 +111,9 @@ def parse_report(text: str) -> dict:
         raise ValueError("Paste a Football Fusion game report first.")
     if len(raw) > MAX_REPORT:
         raise ValueError(f"That report is too long (max {MAX_REPORT:,} characters).")
+    sheet = _SCORE_JSON.match(raw)
+    if sheet:
+        return _json_sheet(int(sheet.group(1)), int(sheet.group(2)), sheet.group(3))
 
     out = {"game": None, "identifier": None, "score": None, "reporter": None, "players": [], "linked": None, "total": None}
     current, position = None, None

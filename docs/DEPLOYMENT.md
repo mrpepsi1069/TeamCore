@@ -22,7 +22,7 @@ Cloudflare Pages, Netlify, Vercel etc.: publish the `frontend/` folder (no build
 Any Python host (Render, Railway, Fly.io, a VPS…). Install `backend/requirements.txt`.
 * Start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 * Environment: `MONGODB_URI`, `MONGODB_DB`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `BACKEND_URL`, `FRONTEND_URL`, `DATA_ENCRYPTION_KEY` (+ optional `ALLOWED_ORIGINS`, `SESSION_TTL_DAYS`).
-* Box-score screenshots (optional): stored in the `match_shots` collection (the browser shrinks them to at most 1600 px / JPEG first) and posted with the result. No OCR service, key or system package is involved. If you ever clear old matches manually, delete their `match_shots` rows too.
+* Box-score screenshots (optional): stored in the `match_shots` collection — one document per match holding every image (up to 8), with the first mirrored in the older fields — and posted with the result. The browser shrinks each to at most 1600 px / JPEG before upload. No OCR service, key or system package is involved. If you ever clear old matches manually, delete their `match_shots` rows too.
 * **Do not** set `DISCORD_TOKEN` here. Serve it over HTTPS only (Discord requires an HTTPS redirect URI outside localhost).
 * Free hosts sleep when idle — the first request after a nap takes ~30 s. The site shows a loading state; use a paid instance for production.
 * Health check: `GET /health`.

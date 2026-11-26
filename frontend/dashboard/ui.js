@@ -174,6 +174,43 @@ export function confirmDialog(title, message, { danger = true, confirmLabel = "C
   });
 }
 
+// ── picked files ──
+// Reads an image as a data URL (never a blob: URL — the dashboard's CSP allows only img-src 'self' https: data:) and
+// shrinks it to at most 1600 px wide, so a screenshot stays a few hundred KB on the way to the API.
+export function readImageFile(file) {
+  const bad = () => new Error("That image couldn't be read — use a PNG, JPEG or WebP screenshot.");
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(bad());
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1600 / (img.width || 1600));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => reject(bad());
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Reads a picked text export (.json / .txt) for a paste box, refusing what the box couldn't hold.
+export async function readTextFile(file, maxChars = 20000) {
+  if (file.size > 1024 * 1024) throw new Error("That file is over 1 MB — this export is much smaller.");
+  let text;
+  try { text = await file.text(); } catch { throw new Error("That file couldn't be read — pick the .json or .txt export."); }
+  if (!text.trim()) throw new Error("That file is empty.");
+  if (text.length > maxChars) {
+    throw new Error(`That file is too big (${text.length.toLocaleString()} characters) — the box holds ${maxChars.toLocaleString()}.`);
+  }
+  return text;
+}
+
 // ── formatting ──
 export function fmtDate(iso, withTime = true) {
   if (!iso) return "—";

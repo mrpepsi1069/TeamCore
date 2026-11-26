@@ -171,7 +171,29 @@ def _report_team(name: str, teams: list) -> dict | None:
     return near[0] if len(near) == 1 else None
 
 
-SHOT_MAX = 2_500_000   # base64 characters, after the browser shrinks the screenshot
+def _ff_sides(game: dict, teams: list, my_team: str = "", flip: bool = False) -> dict:
+    """Resolve a parsed report's two sides to dashboard teams. The manager's team (named by `my_team`, otherwise the
+    first side that is a dashboard team) becomes the match's home side; `flip` swaps the scores, for the short export
+    that can't say which score belongs to which team."""
+    side = game["score"]
+    sides = [{"name": side["home"], "team": _report_team(side["home"], teams), "score": side["home_score"]},
+             {"name": side["away"], "team": _report_team(side["away"], teams), "score": side["away_score"]}]
+    if not (sides[0]["team"] or sides[1]["team"]):
+        raise HTTPException(422, {"errors": {"report": f"Neither “{sides[0]['name']}” nor “{sides[1]['name']}” matches a team in the dashboard — add one of them first."}})
+    key = (my_team or "").strip().lower()
+    mine = next((s for s in sides if key and s["name"].lower() == key), None) or (sides[0] if sides[0]["team"] else sides[1])
+    if not mine["team"]:
+        raise HTTPException(422, {"errors": {"report": f"“{mine['name']}” isn't a team in the dashboard — pick the team this match is for."}})
+    theirs = sides[1] if mine is sides[0] else sides[0]
+    hs, as_ = mine["score"], theirs["score"]
+    if flip:
+        hs, as_ = as_, hs
+    return {"home": mine["team"], "away": theirs["team"], "hs": hs, "as": as_,
+            "away_name": "" if theirs["team"] else theirs["name"], "sides": sides}
+
+
+SHOT_MAX = 2_500_000      # base64 characters per image, after the browser shrinks the screenshot
+SHOT_MAX_COUNT = 8        # images one match can carry (a box score may need more than one screenshot)
 _SHOT = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", re.S)
 
 
@@ -193,20 +215,120 @@ def _shot(body: dict) -> dict | None:
     return {"mime": m.group(1), "data": data, "size": len(data)}
 
 
-async def _save_shot(ctx: Ctx, match_id, shot: dict) -> None:
+def _stamped(ctx: Ctx, shot: dict) -> dict:
+    return {"mime": shot["mime"], "data": shot["data"], "size": shot["size"],
+            "created_at": now(), "created_by": ctx.user["user_id"]}
+
+
+def _shot_images(doc: dict | None) -> list:
+    """Every image stored with a match. Documents written when a match could hold only one are read as a list of one."""
+    if not doc:
+        return []
+    images = [i for i in (doc.get("images") or []) if isinstance(i, dict) and i.get("data")]
+    if not images and doc.get("data"):
+        images = [{"mime": doc.get("mime") or "image/jpeg", "data": doc["data"], "size": doc.get("size") or len(doc["data"])}]
+    return images
+
+
+def _image_url(image: dict) -> str:
+    return f"data:{image.get('mime') or 'image/jpeg'};base64,{image['data']}"
+
+
+async def _save_images(ctx: Ctx, match_id, images: list) -> None:
+    """One document per match holding all its screenshots. The first image is mirrored in the older fields so a bot
+    still on the previous release keeps posting it."""
+    first = images[0]
     await coll("match_shots").replace_one(
         {"guild_id": ctx.guild_id, "match_id": match_id},
-        {"guild_id": ctx.guild_id, "match_id": match_id, "mime": shot["mime"], "data": shot["data"], "size": shot["size"],
+        {"guild_id": ctx.guild_id, "match_id": match_id, "mime": first["mime"], "data": first["data"], "size": first["size"],
+         "images": images, "count": len(images),   # count lets the table show “Screenshots (3)” without reading the data
          "created_at": now(), "created_by": ctx.user["user_id"]}, upsert=True)
 
 
 @router.get("/matches/{rid}/shot")
 async def match_shot(rid: str, ctx: Ctx = Depends(guild_ctx)):
-    """One match's screenshot, as a data URL for the dashboard's Screenshot button."""
+    """One match's first screenshot, as a data URL."""
     doc = await coll("match_shots").find_one({"guild_id": ctx.guild_id, "match_id": oid(rid)})
-    if not doc:
+    images = _shot_images(doc)
+    if not images:
         raise HTTPException(404, "This match has no screenshot.")
-    return {"data_url": f"data:{doc['mime']};base64,{doc['data']}", "size": doc.get("size")}
+    return {"data_url": _image_url(images[0]), "size": images[0].get("size")}
+
+
+@router.get("/matches/{rid}/shots")
+async def match_shots(rid: str, ctx: Ctx = Depends(guild_ctx)):
+    """Every screenshot stored with a match, for the dashboard's screenshot viewer."""
+    doc = await coll("match_shots").find_one({"guild_id": ctx.guild_id, "match_id": oid(rid)})
+    images = _shot_images(doc)
+    if not images:
+        raise HTTPException(404, "This match has no screenshot.")
+    return {"count": len(images), "images": [{"data_url": _image_url(i), "size": i.get("size")} for i in images]}
+
+
+@router.post("/matches/{rid}/shots")
+async def add_match_shots(rid: str, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Attach more box-score screenshots to a match that already exists (the import dialog only covers new matches)."""
+    ctx.require("staff")
+    mid = oid(rid)
+    if not await coll("matches").find_one({"_id": mid, "guild_id": ctx.guild_id}, {"_id": 1}):
+        raise HTTPException(404, "That match no longer exists.")
+    raw = body.get("images")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(422, {"errors": {"image": "Pick at least one screenshot."}})
+    if len(raw) > SHOT_MAX_COUNT:
+        raise HTTPException(422, {"errors": {"image": f"Add at most {SHOT_MAX_COUNT} screenshots at a time."}})
+    added = [_stamped(ctx, _shot({"image": one})) for one in raw]
+    images = _shot_images(await coll("match_shots").find_one({"guild_id": ctx.guild_id, "match_id": mid}))
+    if len(images) + len(added) > SHOT_MAX_COUNT:
+        raise HTTPException(422, {"errors": {"image": f"This match already has {len(images)} screenshot(s); {SHOT_MAX_COUNT} is the limit."}})
+    await _save_images(ctx, mid, images + added)
+    await audit.log(ctx, "match.screenshots", f"{len(added)} added to match {rid}")
+    total = len(images) + len(added)
+    return {"count": total, "notice": f"Added {len(added)} screenshot{'s' if len(added) != 1 else ''} — {total} attached."}
+
+
+@router.post("/matches/{rid}/stats")
+async def attach_stats(rid: str, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Add (or replace) a Football Fusion stat sheet on a match that already exists — for matches logged with only a
+    score. The match keeps its orientation: the report side that is the match's home team supplies the home score."""
+    ctx.require("staff")
+    mid = oid(rid)
+    doc = await coll("matches").find_one({"_id": mid, "guild_id": ctx.guild_id})
+    if not doc:
+        raise HTTPException(404, "That match no longer exists.")
+    try:
+        game = parse_report(str(body.get("report") or ""))
+    except ValueError as e:
+        raise HTTPException(422, {"errors": {"report": str(e)}})
+    game["sport"] = "ff"
+    teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
+    names = {t["team_id"]: t["name"] for t in teams}
+    res = _ff_sides(game, teams, str(body.get("my_team") or ""), bool(body.get("flip")))
+    sides = res["sides"]
+    mine = next((s for s in sides if s["team"] and s["team"]["team_id"] == doc.get("home_team_id")), None)
+    if not mine:  # the report doesn't name the match's team — fall back to the side that is a dashboard team
+        mine = next((s for s in sides if s["team"]), None)
+    if not mine:
+        raise HTTPException(422, {"errors": {"report": "Neither team in the report is a team in the dashboard — add them first."}})
+    theirs = sides[1] if mine is sides[0] else sides[0]
+    hs, as_ = mine["score"], theirs["score"]
+    home_display = names.get(doc.get("home_team_id")) or mine["name"]
+    away_display = names.get(doc.get("away_team_id")) or doc.get("away_name") or theirs["name"]
+    game["score"] = {"home": home_display, "home_score": hs, "away": away_display, "away_score": as_}
+    change = {"ff": game}
+    note = ""
+    if (doc.get("home_score"), doc.get("away_score")) != (hs, as_):
+        note = f" Score updated from {doc.get('home_score')}–{doc.get('away_score')}."
+        change.update({"home_score": hs, "away_score": as_})
+    home_team = next((t for t in teams if t["team_id"] == doc.get("home_team_id")), None)
+    if not doc.get("competition") and home_team and home_team.get("competition"):
+        change["competition"] = home_team["competition"]
+    await coll("matches").update_one({"_id": doc["_id"]}, {"$set": {**change, "updated_at": now(), "updated_by": ctx.user["user_id"]}})
+    await audit.log(ctx, "match.stats", f"{home_display} {hs}–{as_} {away_display}")
+    new = await coll("matches").find_one({"_id": doc["_id"]})
+    return {"item": ser(new), "notice": f"Stat sheet added: {home_display} {hs}–{as_} {away_display}.{note}"}
 
 
 @router.post("/matches/import")
@@ -232,18 +354,11 @@ async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
         except ValueError as e:
             raise HTTPException(422, {"errors": {"report": str(e)}})
         game["sport"] = "ff"
-        side = game["score"]
-        home, away = _report_team(side["home"], teams), _report_team(side["away"], teams)
-        if not home and not away:
-            raise HTTPException(422, {"errors": {"report": f"Neither “{side['home']}” nor “{side['away']}” matches a team in the dashboard — add one of them first."}})
-        hs, as_ = side["home_score"], side["away_score"]
-        away_name = ""
-        if home:
-            away_name = "" if away else side["away"]
-        else:  # the dashboard team was the second side, so it becomes home and the scores swap
-            home, away, away_name = away, None, side["home"]
-            hs, as_ = as_, hs
+        sides = _ff_sides(game, teams, str(body.get("my_team") or ""), bool(body.get("flip")))
+        home, away, hs, as_, away_name = sides["home"], sides["away"], sides["hs"], sides["as"], sides["away_name"]
         competition, label = body.get("competition") or home.get("competition"), game.get("game") or SPORTS["ff"]
+        game["score"] = {"home": home["name"], "home_score": hs,
+                         "away": away["name"] if away else away_name, "away_score": as_}
     else:
         # No OCR: the screenshot is the stat sheet, so the manager types the score and picks the teams.
         if not shot:
@@ -272,13 +387,34 @@ async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
     except T.TeamError as e:
         raise HTTPException(422, {"errors": {"report": str(e)}})
     if shot:
-        await _save_shot(ctx, doc["_id"], shot)
+        await _save_images(ctx, doc["_id"], [_stamped(ctx, shot)])
     for t in updated:
         await notify_records(ctx, t["team_id"])
     opponent = away["name"] if away else away_name
     await audit.log(ctx, "match.import", f"{home['name']} {hs}–{as_} {opponent} ({label})")
     await post_result(ctx, doc["_id"])  # results channel, if the server has one — never blocks on Discord
     return {"item": ser(doc), "notice": f"Imported {label}: {home['name']} {hs}–{as_} {opponent}" + (" — screenshot attached." if shot else ".")}
+
+
+@router.post("/matches/ff/preview")
+async def ff_preview(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Parse an FF report without saving anything, so the import dialog can show “Will submit X vs Y” and let the
+    manager fix which team is theirs and flip the score before the match is written."""
+    ctx.require("staff")
+    try:
+        game = parse_report(str(body.get("report") or ""))
+    except ValueError as e:
+        raise HTTPException(422, {"errors": {"report": str(e)}})
+    teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
+    res = _ff_sides(game, teams, str(body.get("my_team") or ""), bool(body.get("flip")))
+    home = res["home"]
+    return {"game": game.get("game"), "competition": home.get("competition"),
+            "home": home["name"], "home_team_id": home["team_id"],
+            "away": res["away"]["name"] if res["away"] else res["away_name"],
+            "home_score": res["hs"], "away_score": res["as"],
+            "sides": [{"name": s["name"], "team_id": s["team"]["team_id"] if s["team"] else None,
+                       "team_name": s["team"]["name"] if s["team"] else None, "score": s["score"]} for s in res["sides"]],
+            "sides_confirmed": (game["score"].get("sides") or "report") != "unconfirmed"}
 
 
 @router.get("/ff")

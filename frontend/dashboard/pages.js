@@ -2,7 +2,7 @@
 import { state, can } from "./state.js";
 import { api, g } from "./api.js";
 import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, barChart, meter, errorBox,
-  setAccent, pageHead, tabPage } from "./ui.js";
+  setAccent, pageHead, tabPage, readImageFile, readTextFile } from "./ui.js";
 import { renderResource, openForm } from "./resource.js";
 import { showFusion } from "./fusion.js";
 
@@ -342,45 +342,110 @@ function openRosterForm(teams, onSaved) {
     [{ label: "Cancel", onClick: (close) => close() }, { label: "Add roster", cls: "primary", onClick: save }], { wide: true });
 }
 
+// Every roster row, page by page — the tab groups them by team, so it needs them all rather than the first page.
+async function allRosterRows() {
+  const rows = [];
+  for (let page = 1; page <= 20; page++) {
+    const data = await g(`/r/team_members?page=${page}&per_page=100`);
+    rows.push(...(data.items || []));
+    if (!(data.items || []).length || rows.length >= (data.total || 0)) break;
+  }
+  return rows;
+}
+
+const ROSTER_ORDER = { active: 0, reserve: 1, injured: 2, inactive: 3 };
+const byRoster = (a, b) => (ROSTER_ORDER[a.status] ?? 9) - (ROSTER_ORDER[b.status] ?? 9)
+  || (a.jersey ?? 9999) - (b.jersey ?? 9999) || String(a.username || "").localeCompare(String(b.username || ""));
+
 async function rostersBody(el) {
   clear(el);
   const reload = () => { clear(el).append(spinner()); rostersBody(el); };
   const spec = state.specs.team_members, teams = state.gmeta.teams || [];
-  const body = h("div", {});
+  const search = h("input", { type: "search", placeholder: "Search players, teams or positions…", "aria-label": "Search rosters",
+    oninput: () => { clearTimeout(search._t); search._t = setTimeout(paint, 150); } });
+  const out = h("div", {});
   el.append(h("div", { class: "row" },
-    h("p", { class: "page-sub" }, "A roster is a team's players. Build the whole thing in one go, or add and edit players one at a time below."),
-    h("span", { class: "spacer" }),
-    spec && can(spec.write) && teams.length ? h("button", { class: "btn primary small", onclick: () => openRosterForm(teams, reload) }, "New roster") : null),
-    body);
-  return renderResource(body, "team_members", { embedded: true });
+      h("p", { class: "page-sub" }, "Rosters, grouped by team: the team and its league once, then each player's Discord ID, position, jersey and status."),
+      h("span", { class: "spacer" }),
+      spec && can(spec.write) && teams.length ? h("button", { class: "btn primary small", onclick: () => openRosterForm(teams, reload) }, "New roster") : null),
+    h("div", { class: "card tight filters" }, h("div", { class: "search" }, search)),
+    out);
+
+  let rows;
+  try {
+    rows = await allRosterRows();
+  } catch (e) {
+    return clear(out).append(errorBox(e));
+  }
+  const teamOf = new Map(teams.map((t) => [String(t.id), t]));
+  const teamOrder = new Map(teams.map((t, i) => [String(t.id), i]));
+  const writable = spec && can(spec.write);
+
+  async function removePlayer(r, group) {
+    if (!(await confirmDialog("Delete", `Remove ${r.username || "this player"} from ${group.name}'s roster?`, { confirmLabel: "Remove" }))) return;
+    try { await g(`/r/team_members/${r.id}`, { method: "DELETE" }); reload(); } catch (e) { toast(e.message, "err"); }
+  }
+
+  function playerRow(r, group) {
+    const actions = writable
+      ? h("td", {}, h("div", { class: "row end" },
+          h("button", { class: "btn small", onclick: () => openForm(spec, r, reload) }, "Edit"),
+          can(spec.delete) ? h("button", { class: "btn small danger", onclick: () => removePlayer(r, group) }, "Delete") : null))
+      : null;
+    return h("tr", {},
+      h("td", {}, h("div", { class: "identity" }, h("b", {}, r.username || "—"), h("div", { class: "sub" }, String(r.user_id || "")))),
+      h("td", {}, r.position || "—"),
+      h("td", { class: "num" }, r.jersey ?? "—"),
+      h("td", {}, h("span", { class: `badge ${r.status || "active"}` }, String(r.status || "active").replace(/^./, (c) => c.toUpperCase()))),
+      actions);
+  }
+
+  function paint() {
+    const q = search.value.trim().toLowerCase();
+    const groups = new Map();
+    for (const r of rows) {
+      const team = teamOf.get(String(r.team_id));
+      const key = String(r.team_id);
+      if (!groups.has(key)) {
+        groups.set(key, { key, name: team?.name || r.team_name || "Team removed from the dashboard",
+                          competition: team?.competition || "", players: [] });
+      }
+      groups.get(key).players.push(r);
+    }
+    const ordered = [...groups.values()].sort((a, b) => (teamOrder.get(a.key) ?? 9999) - (teamOrder.get(b.key) ?? 9999) || a.name.localeCompare(b.name));
+    clear(out);
+    let shown = 0;
+    for (const group of ordered) {
+      const players = group.players
+        .filter((r) => !q || [r.username, r.user_id, r.position, r.jersey, r.status, group.name, group.competition].some((v) => String(v ?? "").toLowerCase().includes(q)))
+        .sort(byRoster);
+      if (!players.length) continue;
+      shown += players.length;
+      out.append(h("section", { class: "league" },
+        h("div", { class: "league-head" },
+          h("span", { class: "league-name" }, group.name),
+          group.competition ? h("span", { class: "league-meta" }, `– ${group.competition}`) : null,
+          h("span", { class: "spacer" }),
+          h("span", { class: "league-meta" }, `${players.length} player(s)`),
+          writable ? h("button", { class: "btn small", onclick: () => openForm(spec, null, reload, { prefill: { team_id: Number(group.key) } }) }, "Add player") : null),
+        h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Player", "Position", "Jersey", "Status"].map((x) => h("th", {}, x)), writable ? h("th", {}, "") : null)),
+          h("tbody", {}, players.map((r) => playerRow(r, group)))))));
+    }
+    if (!shown) out.append(h("div", { class: "card empty" }, rows.length ? "No players match your search." : "No rosters yet. Use New roster to build one."));
+  }
+  paint();
 }
 
 // ───────── matches: import a report, or log a box score from its screenshot ─────────
 const SPORT_NAMES = { ff: "Football Fusion", pb: "Practical Basketball", uf: "Ultimate Football" };
 
-// Shrinks a screenshot in the browser so it stays a few hundred KB on the way to the API.
-function readShot(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, 1600 / (img.width || 1600));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(img.width * scale));
-      canvas.height = Math.max(1, Math.round(img.height * scale));
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL("image/jpeg", 0.85));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That image couldn't be read — use a PNG, JPEG or WebP screenshot.")); };
-    img.src = url;
-  });
-}
-
 function openStatsImport(onSaved) {
   const teams = state.gmeta.teams || [];
   const sport = h("select", {}, Object.entries(SPORT_NAMES).map(([v, l]) => opt(v, l)));
-  const report = h("textarea", { rows: 9, maxLength: 20000, placeholder: "Paste the Football Fusion game report." });
+  const report = h("textarea", { rows: 9, maxLength: 20000, placeholder: "Paste the Football Fusion export here, or pick its file below." });
+  const reportFile = h("input", { type: "file", accept: ".json,.txt,application/json,text/plain" });
+  const reportFileNote = h("div", { class: "help" }, "Or pick the exported .json / .txt file — its text goes into the box above.");
   const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp" });
   const preview = h("img", { class: "shot-preview hidden", alt: "Screenshot preview" });
   const shotNote = h("div", { class: "help" });
@@ -393,9 +458,48 @@ function openStatsImport(onSaved) {
   const records = h("input", { type: "checkbox" });
   const err = h("div", { class: "err" });
   let shot = null;
+  let parsed = null;  // the /matches/ff/preview answer, once the report has been read
+  let primary = null;
 
-  const ffFields = h("div", { class: "field" }, h("label", {}, "Game report"), report,
-    h("div", { class: "help" }, "Teams are matched by name against your dashboard teams and the score is used as-is. An unknown opponent is kept as a plain name."));
+  // Shown once the report parses: what will be submitted, which stat-sheet team is yours, and the score flip.
+  const confirmLead = h("p", {});
+  const confirmScore = h("p", { class: "page-sub" });
+  const mineSel = h("select", { onchange: () => paint() });
+  const mineField = h("div", { class: "field hidden" }, h("label", {}, "My team"), mineSel);
+  const flip = h("input", { type: "checkbox", onchange: () => paint() });
+  const flipField = h("label", { class: "row hidden" }, flip, " My team lost — flip the score");
+  const confirm = h("div", { class: "card tight hidden" }, confirmLead, confirmScore, mineField, flipField);
+
+  function paint() {
+    if (!parsed) return;
+    const mine = parsed.sides.find((s) => s.name === mineSel.value) || parsed.sides[0];
+    const theirs = parsed.sides.find((s) => s !== mine);
+    const us = flip.checked ? theirs.score : mine.score;
+    const them = flip.checked ? mine.score : theirs.score;
+    confirmLead.textContent = `Will submit ${mine.team_name || mine.name} vs ${theirs.team_name || theirs.name}.`;
+    confirmScore.textContent = `Score: ${us} – ${them}${parsed.competition ? ` · ${parsed.competition}` : ""}`;
+  }
+
+  function showConfirm(p) {
+    parsed = p;
+    clear(mineSel);
+    p.sides.filter((s) => s.team_id).forEach((s) => mineSel.append(opt(s.name, s.team_name)));
+    mineSel.value = (p.sides.find((s) => s.team_id === p.home_team_id) || p.sides[0]).name;
+    mineField.classList.toggle("hidden", mineSel.options.length < 2);
+    flip.checked = false;
+    flipField.classList.toggle("hidden", p.sides_confirmed);
+    confirm.classList.remove("hidden");
+    paint();
+  }
+
+  function resetPreview() {
+    parsed = null;
+    confirm.classList.add("hidden");
+    if (primary) primary.textContent = "Import match";
+  }
+
+  const ffFields = h("div", { class: "field" }, h("label", {}, "Game report"), report, reportFile, reportFileNote,
+    h("div", { class: "help" }, "Both Football Fusion exports work, pasted or uploaded: the long report, or “27 - 25 /// {…}”. Teams are matched by name against your dashboard teams, and you will see what will be submitted before it is saved."));
   const scoreFields = h("div", {},
     h("div", { class: "field" }, h("label", {}, "Your team"), home),
     h("div", { class: "field" }, h("label", {}, "Opponent"), away, awayName,
@@ -412,8 +516,24 @@ function openStatsImport(onSaved) {
       ? "Optional — attach the report screenshot too and the bot posts it with the result."
       : "Required — the screenshot is this match's stat sheet, and the bot posts it with the result.";
   };
-  sport.addEventListener("change", sync);
+  sport.addEventListener("change", () => { sync(); resetPreview(); });
+  report.addEventListener("input", resetPreview);
   sync();
+
+  reportFile.addEventListener("change", async () => {
+    err.textContent = "";
+    const f = reportFile.files && reportFile.files[0];
+    if (!f) return;
+    try {
+      const text = await readTextFile(f, report.maxLength);
+      report.value = text;
+      resetPreview();
+      reportFileNote.textContent = `Loaded ${f.name} (${Math.max(1, Math.round(text.length / 1024))} KB) — it is in the box above, ready to import.`;
+    } catch (e) {
+      err.textContent = e.message;
+      reportFile.value = "";
+    }
+  });
 
   file.addEventListener("change", async () => {
     err.textContent = "";
@@ -423,7 +543,7 @@ function openStatsImport(onSaved) {
     if (!f) return;
     if (f.size > 10 * 1024 * 1024) { err.textContent = "That screenshot is over 10 MB — crop it or take a smaller one."; file.value = ""; return; }
     try {
-      const data = await readShot(f);
+      const data = await readImageFile(f);
       shot = data;
       preview.src = data;
       preview.classList.remove("hidden");
@@ -437,7 +557,7 @@ function openStatsImport(onSaved) {
   const box = h("div", {},
     h("div", { class: "field" }, h("label", {}, "Sport"), sport,
       h("div", { class: "help" }, "Football Fusion keeps its full stat sheet from the report. The other two keep the screenshot you attach.")),
-    ffFields, scoreFields,
+    ffFields, scoreFields, confirm,
     h("div", { class: "field" }, h("label", {}, "Box-score screenshot"), file, shotNote, preview),
     h("div", { class: "field" }, h("label", { for: "ff-when" }, "When it was played"), when),
     h("label", { class: "row" }, records, " Also update team records"), err);
@@ -446,11 +566,23 @@ function openStatsImport(onSaved) {
     [{ label: "Cancel", onClick: (c) => c() },
       { label: "Import match", cls: "primary", onClick: async (c, btns) => {
         err.textContent = "";
+        primary = btns[1];
         const ff = sport.value === "ff";
-        if (ff && !report.value.trim()) { err.textContent = "Paste the Football Fusion game report first."; return; }
+        if (ff && !report.value.trim()) { err.textContent = "Paste the Football Fusion report or pick its .json / .txt file first."; return; }
         if (!ff && !shot) { err.textContent = "Attach the box-score screenshot first."; return; }
+        if (ff && !parsed) {  // parse it first and show what would be submitted — nothing is saved yet
+          btns.forEach((b) => (b.disabled = true));
+          try {
+            showConfirm(await g("/matches/ff/preview", { method: "POST", body: { report: report.value } }));
+            primary.textContent = "Confirm import";
+          } catch (e) {
+            err.textContent = e.errors?.report || e.message;
+          }
+          btns.forEach((b) => (b.disabled = false));
+          return;
+        }
         const body = { sport: sport.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked };
-        if (ff) body.report = report.value;
+        if (ff) { body.report = report.value; body.my_team = mineSel.value; body.flip = flip.checked; }
         else {
           body.home_team_id = Number(home.value);
           body.home_score = hs.value === "" ? undefined : Number(hs.value);
@@ -597,6 +729,16 @@ async function leaguesBody(el) {
   if (!teams.length) el.append(h("div", { class: "card empty" }, "No teams yet — add one from the Teams tab."));
 }
 
+// A resource table with a plain-language line above it, for tabs whose name alone doesn't say what the thing is.
+function describedTab(text, res) {
+  return (el) => {
+    clear(el).append(h("p", { class: "page-sub" }, text));
+    const body = h("div", {});
+    el.append(body);
+    return renderResource(body, res, { embedded: true });
+  };
+}
+
 export function competitionPage(c, initial = "leagues") {
   return tabPage(c, {
     kicker: "Competition",
@@ -608,8 +750,8 @@ export function competitionPage(c, initial = "leagues") {
       { key: "rosters", label: "Rosters", render: (el) => rostersBody(el) },
       { key: "matches", label: "Matches", render: (el) => matchesBody(el) },
       { key: "standings", label: "Standings", render: (el) => leaderboardBody(el) },
-      { key: "seasons", label: "Competitions", render: (el) => renderResource(el, "competitions", { embedded: true }) },
-      { key: "divisions", label: "Divisions", render: (el) => renderResource(el, "divisions", { embedded: true }) },
+      { key: "seasons", label: "Competitions", render: describedTab("A competition is one season or tournament your teams play in — “Fall 2026” or “NFA Season 3”. Teams and divisions name the competition they belong to, and a match can be tagged with one; renaming a competition renames it on its teams and divisions.", "competitions") },
+      { key: "divisions", label: "Divisions", render: describedTab("A division is a smaller group inside a competition — East/West, Varsity/JV and so on. Teams pick their division, and Standings can be filtered by it.", "divisions") },
     ],
     initial,
   });
@@ -617,7 +759,7 @@ export function competitionPage(c, initial = "leagues") {
 
 // ───────── standings ─────────
 function leaderboardBody(c) {
-  clear(c);
+  clear(c).append(h("p", { class: "page-sub" }, "Every team's record from the matches you log, ranked. Win % is wins divided by games played (ties count as half a win), so a team that plays more can rank differently — pick a sort, or filter to one league or division to see a single group."));
   const sort = h("select", {}, opt("wins", "Most wins"), opt("percentage", "Winning %"), opt("losses", "Fewest losses"));
   const comp = h("select", {}, opt("", "All leagues"), state.gmeta.competitions.map((x) => opt(x, x)));
   const div = h("select", {}, opt("", "All divisions"), [...new Set(state.gmeta.divisions.map((d) => d.name))].map((x) => opt(x, x)));

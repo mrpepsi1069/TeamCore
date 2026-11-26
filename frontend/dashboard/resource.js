@@ -2,7 +2,8 @@
 // browser and the server always validate the same shape.
 import { state, can } from "./state.js";
 import { g } from "./api.js";
-import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, errorBox, pageHead, plain } from "./ui.js";
+import { h, clear, spinner, toast, modal, confirmDialog, fmtDate, nameOfChannel, nameOfRole, errorBox, pageHead, plain,
+  readImageFile, readTextFile } from "./ui.js";
 import { showFusion } from "./fusion.js";
 
 const isoToLocalInput = (iso) => {
@@ -78,12 +79,81 @@ function fieldInput(f, value) {
   return { wrap, get, f };
 }
 
+// Matches: a result can be logged with just a score, then get its Football Fusion stat sheet or more box-score
+// screenshots later from this same edit dialog — people often have the images before the export, or the other way round.
+function matchExtras(row) {
+  const report = h("textarea", { rows: 7, maxLength: 20000, placeholder: "Paste the Football Fusion export, or pick its .json / .txt file." });
+  const reportFile = h("input", { type: "file", accept: ".json,.txt,application/json,text/plain" });
+  const reportNote = h("div", { class: "help" }, row.ff
+    ? "A stat sheet is already attached — adding another replaces it, including the per-player numbers behind Stats."
+    : "Optional — adds this match's stat sheet, including the per-player numbers behind Stats.");
+  const shots = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: true });
+  const shotsNote = h("div", { class: "help" }, row.shots
+    ? `${row.shots} screenshot${row.shots > 1 ? "s" : ""} attached — pick more to add them.`
+    : "Optional — pick one or more box-score screenshots; they are stored with the match.");
+  const err = h("div", { class: "err" });
+  let images = [];
+
+  reportFile.addEventListener("change", async () => {
+    err.textContent = "";
+    const f = reportFile.files && reportFile.files[0];
+    if (!f) return;
+    try {
+      report.value = await readTextFile(f, report.maxLength);
+      reportNote.textContent = `Loaded ${f.name} — it is added when you save.`;
+    } catch (e) {
+      err.textContent = e.message;
+      reportFile.value = "";
+    }
+  });
+
+  shots.addEventListener("change", async () => {
+    err.textContent = "";
+    images = [];
+    const picked = [...(shots.files || [])];
+    if (!picked.length) return;
+    try {
+      for (const f of picked) {
+        if (f.size > 10 * 1024 * 1024) throw new Error("One of those images is over 10 MB — crop it or take a smaller one.");
+        images.push(await readImageFile(f));
+      }
+      shotsNote.textContent = `${images.length} new screenshot${images.length > 1 ? "s" : ""} ready — added when you save.`;
+    } catch (e) {
+      err.textContent = e.message;
+      images = [];
+      shots.value = "";
+    }
+  });
+
+  const send = async () => {
+    const notes = [];
+    if (report.value.trim()) {
+      notes.push((await g(`/matches/${row.id}/stats`, { method: "POST", body: { report: report.value } })).notice);
+    }
+    if (images.length) {
+      notes.push((await g(`/matches/${row.id}/shots`, { method: "POST", body: { images } })).notice);
+    }
+    return notes.filter(Boolean).join(" ");
+  };
+
+  return {
+    send,
+    wrap: h("div", { class: "card tight" },
+      h("h2", {}, "Stat sheet & screenshots"),
+      h("p", { class: "help" }, "Logged this match without its stats? Add the Football Fusion export and the box-score images here. The match keeps its teams and date; the report's own score is applied to it."),
+      h("div", { class: "field" }, h("label", {}, "Football Fusion export"), report, reportFile, reportNote),
+      h("div", { class: "field" }, h("label", {}, "Box-score screenshots"), shots, shotsNote),
+      err),
+  };
+}
+
 export function openForm(spec, row, onSaved, { prefill } = {}) {
   const editing = !!row;
   const source = row || prefill || null;
   const inputs = spec.fields.filter((f) => !f.readonly && !(editing && f.create_only))
     .map((f) => fieldInput(f, source?.[f.name] ?? (f.name === "role_ids" ? (source?.roles || []).map((r) => r.role_id) : undefined)));
-  const body = h("div", {}, inputs.map((i) => i.wrap), h("div", { class: "err", id: "form-err" }));
+  const extras = editing && spec.key === "matches" ? matchExtras(row) : null;
+  const body = h("div", {}, inputs.map((i) => i.wrap), extras ? extras.wrap : null, h("div", { class: "err", id: "form-err" }));
   const showErrors = (errors) => {
     body.querySelectorAll(".err").forEach((e) => (e.textContent = ""));
     for (const [k, v] of Object.entries(errors || {})) {
@@ -99,8 +169,18 @@ export function openForm(spec, row, onSaved, { prefill } = {}) {
       btns.forEach((b) => (b.disabled = true));
       try {
         const res = editing ? await g(`/r/${spec.key}/${row.id}`, { method: "PATCH", body: data }) : await g(`/r/${spec.key}`, { method: "POST", body: data });
+        let note = "";
+        if (extras) {
+          try {
+            note = await extras.send();
+          } catch (e) {  // the fields were saved; keep the dialog open so the stats/screenshots can be retried
+            showErrors({ _: `Saved the match, but the stat sheet / screenshots failed: ${e.errors?.report || e.errors?.image || e.message}` });
+            btns.forEach((b) => (b.disabled = false));
+            return;
+          }
+        }
         close();
-        toast(res.notice || (editing ? "Saved" : "Created"), res.queued ? "warn" : "");
+        toast(note || res.notice || (editing ? "Saved" : "Created"), res.queued ? "warn" : "");
         onSaved?.(res);
       } catch (e) {
         showErrors(e.errors || { _: e.message });
@@ -121,11 +201,13 @@ function cell(spec, col, row) {
   if (col === "ff") return row.ff ? h("button", { class: "btn small", onclick: () => showFusion(row.ff) }, "Stats") : "—";
   if (col === "shot") return row.shot ? h("button", { class: "btn small", onclick: async () => {
     try {
-      const res = await g(`/matches/${row.id}/shot`);
-      modal("Stat sheet", h("div", {}, h("img", { src: res.data_url, alt: "Stat sheet", class: "stat-sheet" })),
+      const res = await g(`/matches/${row.id}/shots`);
+      modal("Stat sheet", h("div", { class: "shot-gallery" }, res.images.map((im, n) => h("div", {},
+        res.images.length > 1 ? h("p", { class: "page-sub" }, `Screenshot ${n + 1} of ${res.images.length}`) : null,
+        h("img", { src: im.data_url, alt: `Stat sheet ${n + 1}`, class: "stat-sheet" })))),
         [{ label: "Close", onClick: (c) => c() }], { wide: true });
     } catch (e) { toast(e.message, "err"); }
-  } }, "Screenshot") : "—";
+  } }, row.shots > 1 ? `Screenshots (${row.shots})` : "Screenshot") : "—";
   if (typeof v === "boolean") return v ? "✓" : "✗";
   if (col === "user_id" || col === "author_id" || col.endsWith("_user_id")) return row[col.replace("_id", "_name")] || row.username || String(v);
   if (col === "logo" || col === "image") return h("a", { href: v, target: "_blank", rel: "noopener noreferrer" }, "view");

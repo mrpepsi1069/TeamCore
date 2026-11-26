@@ -119,12 +119,14 @@ async def enrich(ctx: Ctx, res: str, items: list) -> None:
                 i["score"] = f"{i['home_score']} – {i['away_score']}"
     if res == "matches" and items:
         shot_ids = [i["_id"] for i in items if i.get("_id") is not None]
-        have = set()
-        if shot_ids:
-            rows = await coll("match_shots").find({"guild_id": ctx.guild_id, "match_id": {"$in": shot_ids}}, {"match_id": 1}).to_list(None)
-            have = {r["match_id"] for r in rows}
+        have = {}
+        if shot_ids:  # only the count is projected — never the base64 images themselves
+            rows = await coll("match_shots").find({"guild_id": ctx.guild_id, "match_id": {"$in": shot_ids}},
+                                                 {"match_id": 1, "count": 1}).to_list(None)
+            have = {r["match_id"]: r.get("count") or 1 for r in rows}
         for i in items:
-            i["shot"] = i.get("_id") in have
+            i["shots"] = have.get(i.get("_id"), 0)   # how many images the match carries (older rows: one)
+            i["shot"] = i["shots"] > 0
     if res == "polls":
         c = await _counts("poll_votes", "poll_id", ctx, [i["poll_id"] for i in items])
         for i in items:
@@ -491,17 +493,26 @@ async def u_competitions(ctx, old, data):
 
 
 async def u_matches(ctx, old, data):
-    """Matches are editable, and a PATCH has to leave exactly one opponent on the match."""
+    """Matches are editable, and a PATCH has to leave exactly one opponent on the match. The edit form fills the
+    opponent-name box with the away team's own name too, so that copy is dropped instead of counting as a second
+    opponent — otherwise every match against a dashboard team failed to save with “use either a team or a name”."""
     home_id = data.get("home_team_id", old.get("home_team_id"))
     away_id = data.get("away_team_id", old.get("away_team_id"))
     away_name = (data.get("away_name", old.get("away_name")) or "").strip()
+    extra = {}
+    if away_id and away_name:
+        team = await team_of(ctx, away_id)
+        if away_name.lower() == (team.get("name") or "").strip().lower():
+            data.pop("away_name", None)
+            extra["away_name"] = None   # the team is the opponent; keep the stored doc's name empty
+            away_name = ""
     if not away_id and not away_name:
         err("Pick an away team or type your opponent's name.")
     if away_id and away_name:
         err("Use either an away team or an opponent's name, not both.")
     if away_id and away_id == home_id:
         err("A team can't play itself.")
-    return {}
+    return extra
 
 
 async def u_divisions(ctx, old, data):
