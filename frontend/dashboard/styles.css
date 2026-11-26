@@ -300,6 +300,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   padding: 18px 20px 20px; box-shadow: 0 30px 70px rgba(0, 0, 0, .6);
 }
 .modal.wide { width: min(720px, 100%); }
+.roster-rows { display: grid; gap: 6px; margin-top: 10px; max-height: 44vh; overflow-y: auto; padding-right: 4px; }
+.roster-row { display: grid; grid-template-columns: 1.1fr 1.2fr 1fr auto; gap: 6px; align-items: center; }
+.roster-row input { min-width: 0; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .modal-head h2 { font-size: 16px; margin: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; flex-wrap: wrap; }

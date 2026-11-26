@@ -11,6 +11,7 @@ from pymongo import ReturnDocument
 from shared.records import match_outcome
 
 MAX_TEAMS = 100
+ROSTER_MAX = 25          # a roster fits active players plus backups for a league
 DEFAULT_COMPETITION = "General"
 ROSTER_STATUSES = ("active", "reserve", "injured", "inactive")
 
@@ -120,10 +121,38 @@ async def add_roster_member(db, guild_id, team: dict, user_id: str, username: st
         raise TeamError("That player is already on this roster.")
     if jersey is not None and await db.team_members.find_one({"guild_id": g, "team_id": team["team_id"], "jersey": jersey}):
         raise TeamError(f"Jersey #{jersey} is already taken on {team['name']}.")
+    if await db.team_members.count_documents({"guild_id": g, "team_id": team["team_id"]}) >= ROSTER_MAX:
+        raise TeamError(f"A roster can hold up to {ROSTER_MAX} players.")
     doc = {"guild_id": g, "team_id": team["team_id"], "team_name": team["name"], "user_id": str(user_id), "username": username, "position": position or "",
            "jersey": jersey, "status": status, "notes": notes, "created_at": _now(), "created_by": str(actor)}
     doc["_id"] = (await db.team_members.insert_one(doc)).inserted_id
     return doc
+
+
+async def add_roster_batch(db, guild_id, team: dict, players: list[dict], actor="") -> list:
+    """Add a whole roster at once (dashboard → Rosters → New roster). The batch is checked as a whole first, so one bad
+    row adds nobody. Each row is {user_id, username, position, jersey, status}."""
+    g, tid = str(guild_id), team["team_id"]
+    current = await db.team_members.find({"guild_id": g, "team_id": tid}).to_list(None)
+    if len(current) + len(players) > ROSTER_MAX:
+        raise TeamError(f"A roster can hold up to {ROSTER_MAX} players, and {team['name']} already has {len(current)}.")
+    seen = {str(m["user_id"]) for m in current}
+    jerseys = {m.get("jersey") for m in current if m.get("jersey") is not None}
+    errors = []
+    for i, p in enumerate(players):
+        uid = str(p.get("user_id") or "").strip()
+        if uid in seen:
+            errors.append(f"Row {i + 1}: that player is already on this roster.")
+        elif p.get("jersey") is not None and p["jersey"] in jerseys:
+            errors.append(f"Row {i + 1}: jersey #{p['jersey']} is already taken.")
+        elif p.get("status") not in ROSTER_STATUSES:
+            errors.append(f"Row {i + 1}: status must be one of: " + ", ".join(ROSTER_STATUSES))
+        seen.add(uid)
+        jerseys.add(p.get("jersey"))
+    if errors:
+        raise TeamError(" ".join(errors))
+    return [await add_roster_member(db, g, team, p["user_id"], p.get("username") or "", p.get("position") or "", p.get("jersey"),
+                                    p.get("status") or "active", p.get("notes") or "", actor) for p in players]
 
 
 async def remove_roster_member(db, guild_id, team_id: int, user_id: str) -> bool:
@@ -142,23 +171,31 @@ async def teams_of_user(db, guild_id, user_id: str) -> list:
 
 
 # ───────── matches ─────────
-async def log_match(db, guild_id, home: dict, away: dict, home_score: int, away_score: int, competition: str | None = None, played_at: datetime | None = None,
-                    notes: str = "", apply_record: bool = False, actor="") -> tuple[dict, list]:
-    """Store a match; optionally add the win/loss/tie to both teams. Returns (match doc, [updated team docs])."""
-    if home["team_id"] == away["team_id"]:
+async def log_match(db, guild_id, home: dict, away: dict | None, home_score: int, away_score: int, competition: str | None = None,
+                    played_at: datetime | None = None, notes: str = "", apply_record: bool = False, actor="",
+                    away_name: str = "") -> tuple[dict, list]:
+    """Store a match; optionally add the win/loss/tie to the teams involved. `away` is None when the opponent isn't a
+    team in the dashboard — `away_name` then names it, and a record update can only touch the home team. Returns
+    (match doc, [updated team docs])."""
+    if away and home["team_id"] == away["team_id"]:
         raise TeamError("A team can't play itself.")
+    opponent = away["name"] if away else (away_name or "").strip()
     g = str(guild_id)
-    doc = {"guild_id": g, "competition": competition or home.get("competition"), "home_team_id": home["team_id"], "away_team_id": away["team_id"],
+    doc = {"guild_id": g, "competition": competition or home.get("competition"), "home_team_id": home["team_id"],
+           "away_team_id": away["team_id"] if away else None,
            "home_score": home_score, "away_score": away_score, "played_at": played_at or _now(), "notes": notes, "record_applied": False,
            "created_at": _now(), "created_by": str(actor)}
+    if not away:
+        doc["away_name"] = opponent
     doc["_id"] = (await db.matches.insert_one(doc)).inserted_id
     updated = []
     if apply_record:
         h, a = match_outcome(home_score, away_score)
         label = lambda f: "tie" if f == "ties" else f[:-1]  # noqa: E731
-        note = f"Match: {home['name']} {home_score}–{away_score} {away['name']}"
+        note = f"Match: {home['name']} {home_score}–{away_score} {opponent}"
         updated.append(await bump(db, g, home, h, 1, f"match {label(h)}", actor, note))
-        updated.append(await bump(db, g, away, a, 1, f"match {label(a)}", actor, note))
+        if away:
+            updated.append(await bump(db, g, away, a, 1, f"match {label(a)}", actor, note))
         await db.matches.update_one({"_id": doc["_id"]}, {"$set": {"record_applied": True}})
         doc["record_applied"] = True
     return doc, updated

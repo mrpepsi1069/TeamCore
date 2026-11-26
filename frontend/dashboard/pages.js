@@ -218,6 +218,78 @@ async function teamsBody(el) {
   }
 }
 
+// ───────── rosters: build a whole team's roster at once ─────────
+const ROSTER_MAX = 25;
+
+function rosterRow() {
+  const id = h("input", { placeholder: "Discord ID", inputmode: "numeric", maxLength: 21, "aria-label": "Discord ID" });
+  const name = h("input", { placeholder: "Username", maxLength: 80, "aria-label": "Username" });
+  const pos = h("input", { placeholder: "Position", maxLength: 40, "aria-label": "Position" });
+  return { row: h("div", { class: "roster-row" }, id, name, pos), id, name, pos };
+}
+
+function openRosterForm(teams, onSaved) {
+  const teamSel = h("select", { "aria-label": "Team" }, teams.map((t) => opt(String(t.id), t.name)));
+  const list = h("div", { class: "roster-rows" });
+  const err = h("div", { class: "err" });
+  const entries = [];
+  const addBtn = h("button", { class: "btn small", type: "button" }, "Add player");
+  const sync = () => { addBtn.disabled = entries.length >= ROSTER_MAX; };
+  const addRow = () => {
+    if (entries.length >= ROSTER_MAX) return;
+    const e = rosterRow();
+    const remove = h("button", { class: "btn small ghost", type: "button", "aria-label": "Remove this player" }, "Remove");
+    remove.addEventListener("click", () => { e.row.remove(); entries.splice(entries.indexOf(e), 1); sync(); });
+    e.row.append(remove);
+    entries.push(e);
+    list.append(e.row);
+    sync();
+  };
+  addBtn.addEventListener("click", addRow);
+  for (let i = 0; i < 3; i++) addRow();
+
+  const save = async (close, btns) => {
+    err.textContent = "";
+    const players = [];
+    for (const [i, e] of entries.entries()) {
+      const uid = e.id.value.trim(), username = e.name.value.trim(), position = e.pos.value.trim();
+      if (!uid && !username && !position) continue;
+      if (!/^\d{15,21}$/.test(uid)) { err.textContent = `Row ${i + 1}: enter the player's Discord ID (15–21 digits).`; e.id.focus(); return; }
+      players.push({ user_id: uid, username, position });
+    }
+    if (!players.length) { err.textContent = "Add at least one player."; return; }
+    if (new Set(players.map((p) => p.user_id)).size !== players.length) { err.textContent = "The same Discord ID is in the list twice."; return; }
+    btns.forEach((b) => (b.disabled = true));
+    try {
+      const res = await g(`/teams/${teamSel.value}/roster`, { method: "POST", body: { players } });
+      close();
+      toast(`Added ${res.added} player(s) to ${teamSel.selectedOptions[0]?.textContent || "the roster"}`);
+      onSaved?.();
+    } catch (e) {
+      err.textContent = e.errors?.players || e.message;
+      btns.forEach((b) => (b.disabled = false));
+    }
+  };
+  modal("New roster", h("div", {},
+    h("div", { class: "field" }, h("label", {}, "Team"), teamSel),
+    h("p", { class: "help" }, `One row per player — up to ${ROSTER_MAX} per team. Blank rows are ignored.`),
+    list, h("div", { class: "row" }, addBtn), err),
+    [{ label: "Cancel", onClick: (close) => close() }, { label: "Add roster", cls: "primary", onClick: save }], { wide: true });
+}
+
+async function rostersBody(el) {
+  clear(el);
+  const reload = () => { clear(el).append(spinner()); rostersBody(el); };
+  const spec = state.specs.team_members, teams = state.gmeta.teams || [];
+  const body = h("div", {});
+  el.append(h("div", { class: "row" },
+    h("p", { class: "page-sub" }, "A roster is a team's players. Build the whole thing in one go, or add and edit players one at a time below."),
+    h("span", { class: "spacer" }),
+    spec && can(spec.write) && teams.length ? h("button", { class: "btn primary small", onclick: () => openRosterForm(teams, reload) }, "New roster") : null),
+    body);
+  return renderResource(body, "team_members", { embedded: true });
+}
+
 async function leaguesBody(el) {
   const [{ items: teams }, leaguesRes] = await Promise.all([
     g("/r/teams?per_page=100"),
@@ -283,7 +355,7 @@ export function competitionPage(c, initial = "leagues") {
     tabs: [
       { key: "leagues", label: "Leagues", render: (el) => leaguesBody(el) },
       { key: "teams", label: "Teams", render: (el) => teamsBody(el) },
-      { key: "rosters", label: "Rosters", render: (el) => renderResource(el, "team_members", { embedded: true }) },
+      { key: "rosters", label: "Rosters", render: (el) => rostersBody(el) },
       { key: "matches", label: "Matches", render: (el) => renderResource(el, "matches", { embedded: true }) },
       { key: "standings", label: "Standings", render: (el) => leaderboardBody(el) },
       { key: "seasons", label: "Competitions", render: (el) => renderResource(el, "competitions", { embedded: true }) },

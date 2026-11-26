@@ -174,6 +174,18 @@ def _reminder_check(d: dict, partial: bool):
         _bad("Choose a channel or a user to remind")
 
 
+def _match_check(d: dict, partial: bool):
+    if partial:
+        return
+    away_id, away_name = d.get("away_team_id"), (d.get("away_name") or "").strip()
+    if not away_id and not away_name:
+        _bad("Pick an away team or type your opponent's name")
+    if away_id and away_name:
+        _bad("Use either an away team or an opponent's name, not both")
+    if away_id and away_id == d.get("home_team_id"):
+        _bad("A team can't play itself")
+
+
 STATUS = lambda *c: F("status", "select", "Status", choices=list(c), default=c[0])  # noqa: E731
 
 RESOURCES: dict[str, dict] = {}
@@ -206,9 +218,11 @@ R("team_members", "Rosters", "👥", "Competition", "team_members",
   [F("team_id", "int", "Team", picker="team", required=True), F("user_id", "snowflake", "Discord user", picker="user", required=True),
    F("username", max=80), F("position", max=40), F("jersey", "int", min=0, max=999),
    F("status", "select", choices=["active", "reserve", "injured", "inactive"], default="active"), F("notes", "text", max=1000)],
-  ["team_name", "username", "position", "jersey", "status"], search=["username", "position"])
+  ["team_name", "username", "position", "jersey", "status"], search=["username", "position"], sort=["team_name", 1],
+  help="Build a whole roster at once from the Rosters tab — up to 25 players per team, each with a Discord ID, username and position.")
 R("competitions", "Competitions", "", "Competition", "competitions",
-  [F("name", required=True, max=50, create_only=True), F("season", max=30), STATUS("active", "upcoming", "completed"), F("description", "text", max=500)],
+  [F("name", required=True, max=50, help="Renaming a competition updates its divisions and the teams in it."),
+   F("season", max=30), STATUS("active", "upcoming", "completed"), F("description", "text", max=500)],
   ["name", "season", "status"], search=["name"], write="manager", delete="manager")
 R("divisions", "Divisions", "🧩", "Competition", "divisions",
   [F("competition", picker="competition", required=True, max=50),
@@ -216,12 +230,15 @@ R("divisions", "Divisions", "🧩", "Competition", "divisions",
   ["competition", "name"], search=["name", "competition"], write="manager")
 R("matches", "Match History", "🏟️", "Competition", "matches",
   [F("competition", picker="competition", max=50), F("home_team_id", "int", "Home team", picker="team", required=True),
-   F("away_team_id", "int", "Away team", picker="team", required=True), F("home_score", "int", required=True, min=0, max=9999),
+   F("away_team_id", "int", "Away team", picker="team", help="Pick a team already in the dashboard, or leave this empty and name the opponent below."),
+   F("away_name", "str", "Opponent name", max=50, help="For an opponent that isn't a dashboard team — e.g. a team you only know by name."),
+   F("home_score", "int", required=True, min=0, max=9999),
    F("away_score", "int", required=True, min=0, max=9999), F("played_at", "datetime", required=True),
    F("notes", "text", max=1000),
    F("apply_record", "bool", "Update team records", default=False, create_only=True,
-     help="Adds a win/loss/tie to both teams (logged in record history).")],
-  ["played_at", "home_name", "score", "away_name", "competition"], sort=["played_at", -1], search=["notes", "competition"])
+     help="Adds a win/loss/tie to your team — and to the opponent's too when it's a dashboard team (logged in record history).")],
+  ["played_at", "home_name", "score", "away_name", "competition"], sort=["played_at", -1], search=["notes", "competition"],
+  check=_match_check)
 
 # ───────────── Community ─────────────
 R("polls", "Polls", "📊", "Community", "polls",

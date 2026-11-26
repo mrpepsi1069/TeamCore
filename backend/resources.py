@@ -104,7 +104,9 @@ async def enrich(ctx: Ctx, res: str, items: list) -> None:
             if res in TEAM_NAMED:
                 i["team_name"] = names.get(i.get("team_id"), "—")
             else:
-                i["home_name"], i["away_name"] = names.get(i["home_team_id"], "?"), names.get(i["away_team_id"], "?")
+                i["home_name"] = names.get(i.get("home_team_id"), "?")
+                # an opponent that isn't a dashboard team is stored as a plain name
+                i["away_name"] = names.get(i.get("away_team_id")) or i.get("away_name") or "?"
                 i["score"] = f"{i['home_score']} – {i['away_score']}"
     if res == "polls":
         c = await _counts("poll_votes", "poll_id", ctx, [i["poll_id"] for i in items])
@@ -198,10 +200,12 @@ async def c_divisions(ctx, spec, data):
 
 
 async def c_matches(ctx, spec, data):
-    home, away = await team_of(ctx, data["home_team_id"]), await team_of(ctx, data["away_team_id"])
+    home = await team_of(ctx, data["home_team_id"])
+    away = await team_of(ctx, data["away_team_id"]) if data.get("away_team_id") else None  # a typed opponent isn't a team
     try:
         doc, updated = await T.log_match(handle(), ctx.guild_id, home, away, data["home_score"], data["away_score"], data.get("competition"),
-                                         data["played_at"], data.get("notes", ""), data.get("apply_record", False), ctx.user["user_id"])
+                                         data["played_at"], data.get("notes", ""), data.get("apply_record", False), ctx.user["user_id"],
+                                         away_name=data.get("away_name", ""))
     except T.TeamError as e:
         err(str(e))
     for t in updated:
@@ -444,6 +448,33 @@ async def u_leagues(ctx, old, data):
     return extra
 
 
+async def u_competitions(ctx, old, data):
+    """Divisions and teams name their competition by value, so a rename has to reach both of them."""
+    name, old_lower = data.get("name"), old.get("name_lower") or (old.get("name") or "").lower()
+    if not name or (name == old.get("name") and name.lower() == old_lower):
+        return {}
+    if await coll("competitions").find_one({"guild_id": ctx.guild_id, "name_lower": name.lower(), "_id": {"$ne": old["_id"]}}):
+        err("Another competition already has that name.")
+    upd = {"$set": {"competition": name, "competition_lower": name.lower()}}
+    await coll("divisions").update_many({"guild_id": ctx.guild_id, "competition_lower": old_lower}, upd)
+    await coll("teams").update_many({"guild_id": ctx.guild_id, "competition_lower": old_lower}, upd)
+    return {"name_lower": name.lower()}
+
+
+async def u_matches(ctx, old, data):
+    """Matches are editable, and a PATCH has to leave exactly one opponent on the match."""
+    home_id = data.get("home_team_id", old.get("home_team_id"))
+    away_id = data.get("away_team_id", old.get("away_team_id"))
+    away_name = (data.get("away_name", old.get("away_name")) or "").strip()
+    if not away_id and not away_name:
+        err("Pick an away team or type your opponent's name.")
+    if away_id and away_name:
+        err("Use either an away team or an opponent's name, not both.")
+    if away_id and away_id == home_id:
+        err("A team can't play itself.")
+    return {}
+
+
 async def u_divisions(ctx, old, data):
     """A division has no fields of its own beyond its name and competition, so this is the whole edit. Teams name
     their competition and division by value, so a rename or a move has to carry them along."""
@@ -489,8 +520,8 @@ async def u_channels(ctx, old, data):
 
 UPDATE = {"leagues": (u_leagues, None), "teams": (u_teams, after_teams), "team_members": (u_team_linked, None), "player_profiles": (u_team_linked, None),
           "tryouts": (u_team_linked, None), "role_panels": (u_panels, after_panels), "stats_channels": (None, after_stats),
-          "divisions": (u_divisions, None), "scheduled_messages": (u_channels, None), "workflows": (u_channels, None),
-          "reminders": (u_channels, None)}
+          "competitions": (u_competitions, None), "divisions": (u_divisions, None), "matches": (u_matches, None),
+          "scheduled_messages": (u_channels, None), "workflows": (u_channels, None), "reminders": (u_channels, None)}
 
 
 # ───────────── delete hooks ─────────────

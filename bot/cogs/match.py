@@ -60,7 +60,9 @@ class Match(commands.Cog):
         if not rows:
             return await interaction.response.send_message(embed=error_embed("No Matches", "Nothing logged yet."), ephemeral=True)
         names = {t["team_id"]: t["name"] for t in await T.list_teams(db.handle(), g)}
-        lines = [f"{discord.utils.format_dt(m['played_at'], 'd')} · **{names.get(m['home_team_id'], '?')}** {m['home_score']}–{m['away_score']} **{names.get(m['away_team_id'], '?')}**"
+        # an opponent logged by name (not a dashboard team) is shown as it was typed
+        lines = [f"{discord.utils.format_dt(m['played_at'], 'd')} · **{names.get(m.get('home_team_id'), '?')}** {m['home_score']}–{m['away_score']} "
+                 f"**{names.get(m.get('away_team_id')) or m.get('away_name') or '?'}**"
                  + (f" · *{m['competition']}*" if m.get("competition") else "") for m in rows]
         pages = [brand("🏟️ Match History", "\n".join(lines[i:i + 10])) for i in range(0, len(lines), 10)]
         await send_paged(interaction, pages)

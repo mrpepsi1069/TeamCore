@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from shared.records import fmt_pct, sort_teams
-from shared.resources import RESOURCES
+from shared.resources import F, RESOURCES, clean_value
 from backend import audit, bridge
 from backend.db import coll
 from backend.deps import Ctx, guild_ctx
@@ -53,6 +53,38 @@ async def change_record(team_id: int, body: dict = Body(...), ctx: Ctx = Depends
     await audit.log(ctx, f"record.{action}", team["name"])
     new["record"], new["win_pct"] = f"{new['wins']}-{new['losses']}-{new['ties']}", fmt_pct(new["wins"], new["losses"], new["ties"])
     return {"team": ser(new)}
+
+
+ROSTER_ROW = [F("user_id", "snowflake", "Discord ID", required=True), F("username", max=80), F("position", max=40),
+              F("jersey", "int", min=0, max=999), F("status", "select", choices=list(T.ROSTER_STATUSES), default="active")]
+
+
+@router.post("/teams/{team_id}/roster")
+async def add_roster(team_id: int, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Build a whole roster in one go (Rosters → New roster). The batch is all-or-nothing: one bad row adds nobody."""
+    ctx.require("staff")
+    team = await coll("teams").find_one({"guild_id": ctx.guild_id, "team_id": team_id})
+    if not team:
+        raise HTTPException(404, "Team not found")
+    rows = body.get("players")
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(422, {"errors": {"players": "Add at least one player."}})
+    if len(rows) > T.ROSTER_MAX:
+        raise HTTPException(422, {"errors": {"players": f"A roster holds up to {T.ROSTER_MAX} players."}})
+    players = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise HTTPException(422, {"errors": {"players": f"Row {i + 1} is invalid."}})
+        try:
+            players.append({f["name"]: clean_value(f, row.get(f["name"])) for f in ROSTER_ROW})
+        except ValueError as e:
+            raise HTTPException(422, {"errors": {"players": f"Row {i + 1}: {e}"}})
+    try:
+        docs = await T.add_roster_batch(handle(), ctx.guild_id, team, players, ctx.user["user_id"])
+    except T.TeamError as e:
+        raise HTTPException(422, {"errors": {"players": str(e)}})
+    await audit.log(ctx, "roster.create", f"{team['name']} ({len(docs)} players)")
+    return {"items": [ser(d) for d in docs], "added": len(docs)}
 
 
 @router.get("/teams/{team_id}/history")
