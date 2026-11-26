@@ -356,11 +356,13 @@ R("hall_of_fame", "Hall of Fame", "🏛️", "Players", "hall_of_fame",
 
 # ───────────── Statistics channels ─────────────
 R("stats_channels", "Statistics Channels", "📈", "Competition", "stats_channels",
-  [F("type", "select", "Statistic", choices=["members", "humans", "bots", "boosts", "team", "custom"], required=True, create_only=True),
+  [F("type", "select", "Statistic", choices=["members", "humans", "bots", "boosts", "team", "record", "rings", "custom"],
+     required=True, create_only=True),
    F("team_id", "int", "Team", picker="team", create_only=True), F("label", "str", "Custom name", max=40, create_only=True),
    F("value", "str", "Custom value", max=60), F("template", "str", "Channel name template", max=100,
-                                              help="e.g. 👥 Members: {value}   •   placeholders: {value} {name} {record} {wins} {losses} {ties} {pct}")],
-  ["key", "type", "channel_id", "last_name"], write="manager")
+                                              help="e.g. 👥 Members: {value}   •   placeholders: {value} {name} {record} {wins} {losses} {ties} {pct} {teams} {rings} {leagues}")],
+  ["key", "type", "channel_id", "last_name"], write="manager",
+  help="Overall team record adds up every team's wins/losses/ties across all leagues; Championship rings counts the rings in this server.")
 
 RESOURCE_ORDER = list(RESOURCES)
 

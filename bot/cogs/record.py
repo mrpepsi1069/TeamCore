@@ -241,6 +241,7 @@ class Record(commands.Cog):
         rows = await db.col("team_history").find({"guild_id": str(interaction.guild_id), "team_id": t["team_id"]}).sort("timestamp", -1).to_list(15)
         rows = rows[:15]
         lines = [
+            f"📝 {discord.utils.format_dt(r['timestamp'], 'd')} — {r['note']}" if r.get("action") == "note" and r.get("note") else
             f"{discord.utils.format_dt(r['timestamp'], 'R')} — **{r['action']}** by <@{r['by']}>"
             + (f" ({fmt_record(r['after'])})" if r.get("after") and "wins" in r["after"] else "")
             for r in rows

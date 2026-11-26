@@ -129,6 +129,10 @@ export function verificationPage(c) {
 
 // ───────── competition hub: leagues, teams, rosters, matches, standings ─────────
 const lower = (v) => String(v ?? "").trim().toLowerCase();
+const localDateTime = (d) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 function leagueMatchesTeam(league, team) {
   const key = lower(team.competition);
@@ -155,11 +159,38 @@ function teamRecordRow(t, { onChanged, compact = false } = {}) {
   const history = async () => {
     try {
       const { items } = await g(`/teams/${t.team_id}/history`);
-      modal(`${t.name} — record history`, items.length
-        ? h("div", { class: "list" }, items.map((x) => h("div", { class: "list-row" },
-          h("b", {}, x.action), h("span", { class: "record" }, x.after ? `${x.after.wins}-${x.after.losses}-${x.after.ties}` : ""),
+      const note = h("textarea", { placeholder: "What happened? A signing, a venue change, a big win…", maxLength: 500, rows: 2 });
+      const when = h("input", { id: "note-when", type: "datetime-local", value: localDateTime(new Date()) });
+      const err = h("div", { class: "err" });
+      const add = h("button", { class: "btn primary small", type: "button" }, "Add to timeline");
+      const timeline = h("div", {},
+        h("h2", {}, "Timeline"),
+        items.length ? h("div", { class: "list" }, items.map((x) => h("div", { class: "list-row" },
+          h("b", {}, x.action === "note" ? "Note" : x.action),
+          x.note ? h("span", {}, x.note) : null,
+          x.after && "wins" in x.after ? h("span", { class: "record" }, `${x.after.wins}-${x.after.losses}-${x.after.ties}`) : null,
           h("span", { class: "spacer" }), h("span", { class: "sub" }, fmtDate(x.timestamp)))))
-        : h("p", { class: "page-sub" }, "No history yet."), [{ label: "Close", onClick: (x) => x() }]);
+          : h("p", { class: "page-sub" }, "Nothing on the timeline yet."));
+      const m = modal(`${t.name} — history`, h("div", {},
+        h("div", { class: "field" }, h("label", {}, "Note"), note,
+          h("label", { for: "note-when" }, "When it happened"), when,
+          h("div", { class: "help" }, "Saved on the timeline at the date you pick — backdate it for things that already happened."), err),
+        h("div", { class: "row" }, add), timeline),
+        [{ label: "Close", onClick: (x) => x() }]);
+      add.addEventListener("click", async () => {
+        err.textContent = "";
+        if (!note.value.trim()) { err.textContent = "Write something first."; return; }
+        add.disabled = true;
+        try {
+          await g(`/teams/${t.team_id}/history`, { method: "POST", body: { note: note.value.trim(), happened_at: when.value ? new Date(when.value).toISOString() : undefined } });
+          toast("Note added to the timeline");
+          m.close();
+          history();
+        } catch (e) {
+          err.textContent = e.errors?.note || e.errors?.happened_at || e.message;
+          add.disabled = false;
+        }
+      });
     } catch (e) { toast(e.message, "err"); }
   };
   return h("div", { class: "team-row" },

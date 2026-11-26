@@ -16,6 +16,8 @@ DEFAULT_TEMPLATES = {
     "bots": "🤖 Bots: {value}",
     "boosts": "🚀 Boosts: {value}",
     "team": "🏆 {name}: {record}",
+    "record": "🏆 Overall: {record} · {pct}",
+    "rings": "💍 Rings: {value}",
     "custom": "{name}: {value}",
 }
 STAT_CHOICES = [
@@ -24,6 +26,8 @@ STAT_CHOICES = [
     app_commands.Choice(name="Bots", value="bots"),
     app_commands.Choice(name="Server boosts", value="boosts"),
     app_commands.Choice(name="Team record", value="team"),
+    app_commands.Choice(name="Overall team record (all leagues)", value="record"),
+    app_commands.Choice(name="Championship rings", value="rings"),
     app_commands.Choice(name="Custom", value="custom"),
 ]
 CATEGORY_NAME = "📊 Server Stats"
@@ -66,6 +70,14 @@ async def compute_values(guild: discord.Guild, cfg: dict) -> dict | None:
             return None
         return {"name": team["name"], "wins": team["wins"], "losses": team["losses"], "ties": team["ties"],
                 "record": fmt_record(team), "pct": fmt_pct(team), "value": fmt_record(team)}
+    if t == "record":  # every team's record added up, across all leagues
+        teams = await db.col("teams").find({"guild_id": str(guild.id)}).to_list(None)
+        total = {k: sum(int(x.get(k) or 0) for x in teams) for k in ("wins", "losses", "ties")}
+        return {"name": "Overall", **total, "record": fmt_record(total), "pct": fmt_pct(total), "teams": str(len(teams)), "value": fmt_record(total)}
+    if t == "rings":
+        q = {"guild_id": str(guild.id)}
+        count = await db.col("championship_rings").count_documents(q)
+        return {"value": str(count), "rings": str(count), "leagues": str(len(await db.col("championship_rings").distinct("league_id", q)))}
     return None
 
 
@@ -133,7 +145,7 @@ class Stats(commands.Cog):
         async with lock:
             query = {"guild_id": str(guild.id)}
             if only_team_id is not None:
-                query["key"] = f"team:{only_team_id}"
+                query["key"] = {"$in": [f"team:{only_team_id}", "record"]}  # the overall record moves too
             for cfg in await db.col("stats_channels").find(query).to_list(None):
                 try:
                     await self.update_one(guild, cfg)
@@ -162,6 +174,13 @@ class Stats(commands.Cog):
         guild = self.bot.get_guild(int(guild_id))
         if guild and db.is_connected():
             await self.update_guild(guild, only_team_id=team_id)
+
+    @commands.Cog.listener()
+    async def on_teamcore_stats_changed(self, guild_id: str):
+        """Something outside the record changed a number (e.g. a championship ring was awarded)."""
+        guild = self.bot.get_guild(int(guild_id))
+        if guild and db.is_connected():
+            await self.update_guild(guild)
 
     # ── commands ─────────────────────────────────────────────
     async def _admin(self, interaction):
@@ -256,7 +275,7 @@ class Stats(commands.Cog):
                 return await interaction.response.send_message(embed=error_embed("No Stats Channels", "Use `/stats setup` or `/stats add`."), ephemeral=True)
             lines = [f"• `{r['key']}` → <#{r['channel_id']}> — `{r.get('template') or DEFAULT_TEMPLATES[r['type']]}`" for r in rows if r.get("channel_id")]
             e = brand("⚙️ Stats Channels", "\n".join(lines) or "None yet.")
-            e.add_field(name="Placeholders", value="`{value}` `{name}` `{wins}` `{losses}` `{ties}` `{record}` `{pct}` `{tier}`", inline=False)
+            e.add_field(name="Placeholders", value="`{value}` `{name}` `{wins}` `{losses}` `{ties}` `{record}` `{pct}` `{teams}` `{rings}` `{leagues}` `{tier}`", inline=False)
             return await interaction.response.send_message(embed=e, ephemeral=True)
         cfg = await self._find(interaction, stat, team, custom_name)
         if not cfg:

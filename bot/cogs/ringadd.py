@@ -84,6 +84,8 @@ class RingAdd(commands.Cog):
             )
             results.append(f"{'✅' if ring else '⚠️ (already has ring)'} {p.mention}")
 
+        self.bot.dispatch("teamcore_stats_changed", str(interaction.guild_id))  # refresh the rings stat channel
+
         cfg = await db.get_guild_config(str(interaction.guild_id)) or {}
         desc = (
             f"**{league_doc['league_name']} — {season} Champions**"

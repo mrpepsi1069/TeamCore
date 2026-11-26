@@ -4,7 +4,7 @@ import csv
 import io
 import json
 import zipfile
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from shared.records import fmt_pct, sort_teams
@@ -91,6 +91,32 @@ async def add_roster(team_id: int, body: dict = Body(...), ctx: Ctx = Depends(gu
 async def record_history(team_id: int, ctx: Ctx = Depends(guild_ctx)):
     rows = await coll("team_history").find({"guild_id": ctx.guild_id, "team_id": team_id}).sort("timestamp", -1).limit(50).to_list(None)
     return {"items": ser(rows)}
+
+
+@router.post("/teams/{team_id}/history")
+async def add_team_note(team_id: int, body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
+    """Add a dated note to a team's timeline (Teams → History) — anything that happened, on the day it happened."""
+    ctx.require("staff")
+    team = await coll("teams").find_one({"guild_id": ctx.guild_id, "team_id": team_id})
+    if not team:
+        raise HTTPException(404, "Team not found")
+    note = str(body.get("note") or "").strip()
+    if not note:
+        raise HTTPException(422, {"errors": {"note": "Write something first."}})
+    if len(note) > 500:
+        raise HTTPException(422, {"errors": {"note": "Max 500 characters."}})
+    ts = now()
+    if body.get("happened_at"):
+        try:
+            ts = datetime.fromisoformat(str(body["happened_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, {"errors": {"happened_at": "Use a valid date and time."}})
+        ts = ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    doc = {"guild_id": ctx.guild_id, "team_id": team_id, "team_name": team["name"], "action": "note", "note": note,
+           "by": ctx.user["user_id"], "by_name": ctx.user.get("username") or "", "timestamp": ts, "created_at": now()}
+    doc["_id"] = (await coll("team_history").insert_one(doc)).inserted_id
+    await audit.log(ctx, "team.note", f"{team['name']}: {note[:60]}")
+    return {"item": ser(doc)}
 
 
 @router.get("/leaderboard")
