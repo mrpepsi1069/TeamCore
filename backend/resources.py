@@ -444,6 +444,24 @@ async def u_leagues(ctx, old, data):
     return extra
 
 
+async def u_divisions(ctx, old, data):
+    """A division has no fields of its own beyond its name and competition, so this is the whole edit. Teams name
+    their competition and division by value, so a rename or a move has to carry them along."""
+    name = data.get("name") or old["name"]
+    comp = data.get("competition") or old["competition"]
+    name_lower, comp_lower = name.lower(), comp.strip().lower()
+    if name == old["name"] and comp_lower == old["competition_lower"]:
+        return {}
+    if comp_lower != old["competition_lower"] and not await coll("competitions").find_one({"guild_id": ctx.guild_id, "name_lower": comp_lower}):
+        err("Create the competition first.")
+    if await coll("divisions").find_one({"guild_id": ctx.guild_id, "competition_lower": comp_lower, "name_lower": name_lower,
+                                         "_id": {"$ne": old["_id"]}}):
+        err("That division already exists in that competition.")
+    await coll("teams").update_many({"guild_id": ctx.guild_id, "competition_lower": old["competition_lower"], "division": old["name"]},
+                                     {"$set": {"competition": comp, "competition_lower": comp_lower, "division": name}})
+    return {"name_lower": name_lower, "competition_lower": comp_lower}
+
+
 async def u_team_linked(ctx, old, data):
     return {"team_name": (await team_of(ctx, data["team_id"]))["name"]} if data.get("team_id") is not None else {}
 
@@ -471,7 +489,8 @@ async def u_channels(ctx, old, data):
 
 UPDATE = {"leagues": (u_leagues, None), "teams": (u_teams, after_teams), "team_members": (u_team_linked, None), "player_profiles": (u_team_linked, None),
           "tryouts": (u_team_linked, None), "role_panels": (u_panels, after_panels), "stats_channels": (None, after_stats),
-          "scheduled_messages": (u_channels, None), "workflows": (u_channels, None), "reminders": (u_channels, None)}
+          "divisions": (u_divisions, None), "scheduled_messages": (u_channels, None), "workflows": (u_channels, None),
+          "reminders": (u_channels, None)}
 
 
 # ───────────── delete hooks ─────────────

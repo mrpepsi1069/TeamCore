@@ -17,7 +17,7 @@ The navigation is grouped: **Overview**, then **Club · Community · Scheduling 
 | Rosters | Leagues & results → Rosters | One row per player per team; players pick their team from the same list members do |
 | Match history | Leagues & results → Matches | Optional "update team records" (adds W/L/T to both teams, logged). Also `/match` in Discord |
 | Standings | Leagues & results → Standings | Sort by wins / win % / fewest losses, filter by league & division |
-| Competitions & divisions | Leagues & results → Competitions, Divisions | Teams pick from them; can't delete one that teams still use |
+| Competitions & divisions | Leagues & results → Competitions, Divisions | Teams pick from them. A division can be renamed or moved to another competition, and the teams in it move with it; neither can be deleted while teams still use it |
 | Member directory | Members | Searchable list of everyone the dashboard knows (access grants, roster rows and the last synced member list) with access level, team, position, jersey and roster status. **Sync members** asks the bot to publish Discord's member list; **Discord roles** are diffed and applied by the bot. Staff can view and sync, managers edit team/roster fields, only admins change access levels or roles |
 | Statistics voice channels | Statistics Channels | Create/edit/remove; the bot creates the locked, visible voice channels |
 | Moderation | Moderation | Lock/unlock channels (original permission restored) + searchable log. **Kick/ban are not exposed on the web by design** (use Discord's own tools) |

@@ -211,7 +211,8 @@ R("competitions", "Competitions", "", "Competition", "competitions",
   [F("name", required=True, max=50, create_only=True), F("season", max=30), STATUS("active", "upcoming", "completed"), F("description", "text", max=500)],
   ["name", "season", "status"], search=["name"], write="manager", delete="manager")
 R("divisions", "Divisions", "🧩", "Competition", "divisions",
-  [F("competition", picker="competition", required=True, max=50, create_only=True), F("name", required=True, max=50, create_only=True)],
+  [F("competition", picker="competition", required=True, max=50),
+   F("name", required=True, max=50, help="Renaming a division (or moving it to another competition) moves the teams in it too.")],
   ["competition", "name"], search=["name", "competition"], write="manager")
 R("matches", "Match History", "🏟️", "Competition", "matches",
   [F("competition", picker="competition", max=50), F("home_team_id", "int", "Home team", picker="team", required=True),
