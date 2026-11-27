@@ -25,13 +25,14 @@ export async function membersPage(c) {
   const levelFilter = h("select", { "aria-label": "Filter by access level" });
   const table = h("div", {});
   const note = h("div", {});
+  const board = h("div", { class: "card" });
 
   c.append(pageHead({
     kicker: "Club",
     title: "Members",
     sub: "Everyone in this server. Give dashboard access, put people on a team, and manage Discord roles without leaving the console.",
     actions: [syncBtn],
-  }), note);
+  }), note, board);
 
   const bar = h("div", { class: "card tight filters" },
     h("div", { class: "search" }, search), teamFilter, levelFilter, h("span", { class: "spacer" }), h("span", { class: "sub nowrap" }, ""));
@@ -83,6 +84,28 @@ export async function membersPage(c) {
         h("tbody", {}, rows.map((m) => h("tr", {}, cells(m)))))));
   };
 
+  // The five biggest balances in the server. It sorts every member the page already loaded, so
+  // it costs no request and always agrees with the Cash column below it.
+  const renderBoard = () => {
+    const top = [...view.items]
+      .sort((a, b) => (b.cash || 0) - (a.cash || 0) || String(a.display_name || "").localeCompare(String(b.display_name || "")))
+      .slice(0, 5);
+    clear(board);
+    if (!top.length) { board.classList.add("hidden"); return; }
+    board.classList.remove("hidden");
+    board.append(
+      h("h2", {}, "💵 Cash leaderboard"),
+      h("p", { class: "page-sub" }, "The five biggest balances in this server."),
+      h("div", { class: "list" }, top.map((m, i) => h("div", { class: "list-row" },
+        h("span", { class: "badge plain" }, `#${i + 1}`),
+        m.avatar
+          ? h("img", { class: "avatar sm", src: m.avatar, alt: "", referrerpolicy: "no-referrer" })
+          : h("span", { class: "avatar initial" }, (m.display_name || "?").charAt(0)),
+        h("b", {}, m.display_name),
+        h("span", { class: "spacer" }),
+        h("b", {}, m.cash_display || "$0 Cash")))));
+  };
+
   const load = async () => {
     clear(table).append(spinner());
     try {
@@ -101,6 +124,7 @@ export async function membersPage(c) {
         [...teams].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).map(([id, name]) => h("option", { value: id, selected: id === view.team }, name)));
       clear(levelFilter).append(h("option", { value: "" }, "All access"),
         ["viewer", "staff", "manager"].map((v) => h("option", { value: v, selected: v === view.level }, LEVEL_LABEL[v])));
+      renderBoard();
       render();
     } catch (e) { clear(table).append(errorBox(e)); }
   };
