@@ -34,7 +34,7 @@ def check_balance(value) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{CURRENCY_NAME} balances are whole numbers.")
     if value < 0:
-        raise ValueError(f"A balance can't be negative — that includes negative {CURRENCY_NAME}.")
+        raise ValueError(f"A balance can't be negative.")
     if value > MAX_CASH:
         raise ValueError(f"That is more than the {format_cash(MAX_CASH)} limit.")
     return value
@@ -50,7 +50,7 @@ WHEEL_SEGMENTS = ("💎", "🍒", "🔔", "🍋", "⭐")
 CARD_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 HIGH_CARD_WINS = frozenset(("J", "Q", "K", "A"))
 
-# Every game pays back less than the entry on average (RTP 88-95%), so the house keeps a
+# Every game pays back less than the entry on average (RTP 87-95%), so the house keeps a
 # margin; the numbers are the "configured reward" a win credits, in basis points.
 CASINO_GAMES = {
     "coinflip": {

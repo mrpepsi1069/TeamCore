@@ -205,12 +205,9 @@ class Economy(commands.Cog):
         detail = {
             "add": f"Added {format_cash(result['amount'])} to {member.mention}.",
             "remove": f"Removed {format_cash(result['amount'])} from {member.mention}.",
-            "set": f"Set {member.mention} to exactly {format_cash(result['balance'])}.",
+            "set": f"Replaced {member.mention}'s balance.",
         }[mode]
-        embed = success_embed(
-            "Cash Updated",
-            f"{detail}\nBalance: **{format_cash(result['balance'])}**\nBatch `{result['batch_id']}`",
-        )
+        embed = success_embed("Cash Updated", f"{detail}\nBalance: **{format_cash(result['balance'])}**")
         await interaction.response.send_message(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     async def _many(self, interaction: discord.Interaction, amount: int, mode: str):

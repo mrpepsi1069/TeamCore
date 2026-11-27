@@ -75,10 +75,17 @@ async def ensure_account(dbh, guild_id, user_id) -> dict:
     except DuplicateKeyError:  # another request opened it between our read and write
         result = None
     if result is not None and getattr(result, "upserted_id", None) is not None:
-        # Opening the account is the one grant that doesn't come from another balance, so
-        # record it in the ledger too (a no-op if it was already written).
-        await _record_once(dbh, f"cash-start:{gid}:{uid}", kind="starting", guild_id=gid,
-                           to_id=uid, amount=STARTING_CASH, balance_after=STARTING_CASH)
+        # Opening the account is the one grant that doesn't come from another balance, so it
+        # gets a ledger row too. A duplicate id just means an earlier request already wrote it.
+        start_id = f"cash-start:{gid}:{uid}"
+        try:
+            await _c(dbh, LEDGER).insert_one({
+                "_id": start_id, "txn_id": start_id, "kind": "starting", "guild_id": gid,
+                "to_id": uid, "amount": STARTING_CASH, "balance_after": STARTING_CASH,
+                "status": "done", "created_at": now, "completed_at": now,
+            })
+        except DuplicateKeyError:
+            pass
     doc = await accounts.find_one(key)
     if doc is None:
         raise EconomyError("Could not open a Cash account — please try again.")
@@ -98,16 +105,6 @@ async def balances(dbh, guild_id, user_ids) -> dict:
         {"guild_id": str(guild_id), "user_id": {"$in": ids}}, {"user_id": 1, "balance": 1}
     ).to_list(None)
     return {r["user_id"]: int(r.get("balance") or 0) for r in rows}
-
-
-async def _record_once(dbh, txn_id: str, **fields) -> bool:
-    """Write one ledger row; False when that transaction id is already recorded."""
-    doc = {"_id": txn_id, "txn_id": txn_id, "status": "done", "created_at": _now(), "completed_at": _now(), **fields}
-    try:
-        await _c(dbh, LEDGER).insert_one(doc)
-    except DuplicateKeyError:
-        return False
-    return True
 
 
 async def _claim(dbh, txn_id: str, **fields) -> None:
@@ -166,7 +163,7 @@ async def _refund(dbh, guild_id, user_id, amount: int, txn_id: str, kind: str, g
 async def transfer(dbh, guild_id, sender_id, recipient_id, amount: int, request_id) -> dict:
     """Send Cash member-to-member. Both sides are written to the ledger, and re-sending the
     same request can't pay twice (the ledger id is derived from the Discord interaction id)."""
-    amount = check_amount(int(amount))
+    amount = check_amount(amount)
     gid, sender, recipient = str(guild_id), str(sender_id), str(recipient_id)
     if sender == recipient:
         raise EconomyError("You can't send Cash to yourself.")
@@ -191,7 +188,7 @@ async def transfer(dbh, guild_id, sender_id, recipient_id, amount: int, request_
 async def open_game(dbh, guild_id, user_id, game: str, entry: int, ttl_seconds: int = CASINO_GAME_TIMEOUT) -> dict:
     """Take the entry and open a pending game. Raises InsufficientCash when the member
     doesn't hold the full entry; a game that can't be stored is refunded immediately."""
-    entry = check_amount(int(entry))
+    entry = check_amount(entry)
     gid, uid, now = str(guild_id), str(user_id), _now()
     await ensure_account(dbh, gid, uid)
     game_id = uuid4().hex
@@ -253,8 +250,8 @@ async def expire_game(dbh, game_id):
 
 
 async def _set_balance(dbh, guild_id, user_id, target: int, txn_id: str, **fields) -> int:
-    """Write an exact balance (owner tool). The ledger row is claimed first, like every move."""
-    target = check_balance(int(target))
+    """Write an exact balance (owner tool). The ledger row is claimed first, like every move.
+    `target` is validated by admin_adjust, the only caller."""
     await ensure_account(dbh, guild_id, user_id)
     await _claim(dbh, txn_id, kind="admin_set", guild_id=str(guild_id), amount=target,
                  to_id=str(user_id), **fields)
@@ -296,7 +293,7 @@ async def admin_adjust(dbh, guild_id, user_id, mode: str, amount: int, actor_id,
         # Strict on purpose: a float must be refused, never silently truncated to a whole number.
         target = check_balance(amount)
         new_balance = await _set_balance(dbh, gid, uid, target, txn, **fields)
-        return {"mode": mode, "amount": target, "balance": new_balance, "batch_id": batch}
+        return {"amount": target, "balance": new_balance, "batch_id": batch}
 
     delta = check_amount(amount)
     await ensure_account(dbh, gid, uid)
@@ -308,7 +305,7 @@ async def admin_adjust(dbh, guild_id, user_id, mode: str, amount: int, actor_id,
         new_balance = await _move(dbh, gid, uid, -delta, txn, "admin_debit", from_id=uid, **fields)
         if new_balance is None:
             raise InsufficientCash(await balance(dbh, gid, uid), delta)
-    return {"mode": mode, "amount": delta, "balance": new_balance, "batch_id": batch}
+    return {"amount": delta, "balance": new_balance, "batch_id": batch}
 
 
 async def admin_adjust_many(dbh, guild_id, user_ids, mode: str, amount: int, actor_id) -> dict:
@@ -329,19 +326,17 @@ async def admin_adjust_many(dbh, guild_id, user_ids, mode: str, amount: int, act
             updated += 1
         except InsufficientCash:
             skipped += 1
-    return {"mode": mode, "amount": amount, "updated": updated, "skipped": skipped, "batch_id": batch}
+    return {"amount": amount, "updated": updated, "skipped": skipped, "batch_id": batch}
 
 
-async def expire_due(dbh) -> int:
+async def expire_due(dbh) -> None:
     """Refund every pending game whose time ran out. Runs at startup and on a timer, so a
     restart (when button views are already gone) can't leave an entry unreconciled."""
     rows = await _c(dbh, GAMES).find(
         {"status": "pending", "expires_at": {"$lte": _now()}}, {"game_id": 1}
     ).to_list(None)
-    expired = 0
     for row in rows:
         try:
-            expired += 1 if await expire_game(dbh, row["game_id"]) else 0
+            await expire_game(dbh, row["game_id"])
         except Exception as e:
             print(f"⚠️ casino expiry failed for {row.get('game_id')}: {e}")
-    return expired
