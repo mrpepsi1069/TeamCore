@@ -14,6 +14,8 @@ CASINO_GAME_TIMEOUT = 90      # seconds a casino game waits for "Play" before it
 DAILY_BASE = 500              # what /daily pays on the first day of a streak
 DAILY_STREAK_BONUS = 100      # extra Cash for each consecutive day claimed
 DAILY_MAX_STREAK = 7          # the bonus stops growing here (day 7 pays the most)
+DAILY_MIN_ACCOUNT_AGE_DAYS = 7  # a Discord account must be this old to claim (stops fresh alts)
+DAILY_MIN_MEMBER_HOURS = 24     # and must have been in this server this long
 
 
 def format_cash(amount) -> str:
@@ -54,6 +56,12 @@ def daily_reward(streak: int) -> int:
     return DAILY_BASE + DAILY_STREAK_BONUS * (day - 1)
 
 
+def theoretical_rtp(game: str) -> float:
+    """A game's long-run payback: its win chance times the payout, as a fraction (0.95 = 95%)."""
+    spec = CASINO_GAMES[game]
+    return spec["win_rate"] * spec["payout_bps"] / 10000
+
+
 SLOT_SYMBOLS = ("🍒", "🔔", "7️⃣")
 WHEEL_SEGMENTS = ("💎", "🍒", "🔔", "🍋", "⭐")
 CARD_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
@@ -67,36 +75,42 @@ CASINO_GAMES = {
         "emoji": "🪙",
         "odds": "50% chance · pays 1.9×",
         "payout_bps": 19000,
+        "win_rate": 0.5,
     },
     "dice": {
         "label": "Dice",
         "emoji": "🎲",
         "odds": "Roll 5 or 6 (2 in 6) · pays 2.75×",
         "payout_bps": 27500,
+        "win_rate": 2 / 6,
     },
     "slots": {
         "label": "Slots",
         "emoji": "🎰",
         "odds": "Three of a kind (1 in 9) · pays 8×",
         "payout_bps": 80000,
+        "win_rate": 1 / 9,
     },
     "wheel": {
         "label": "Wheel",
         "emoji": "🎡",
         "odds": "Lands on 💎 (1 in 5) · pays 4.5×",
         "payout_bps": 45000,
+        "win_rate": 1 / 5,
     },
     "highcard": {
         "label": "High Card",
         "emoji": "🃏",
         "odds": "Draw J, Q, K or A · pays 2.9×",
         "payout_bps": 29000,
+        "win_rate": 4 / 13,
     },
     "sevens": {
         "label": "Lucky Sevens",
         "emoji": "7️⃣",
         "odds": "Two dice total 7 · pays 5.25×",
         "payout_bps": 52500,
+        "win_rate": 6 / 36,
     },
 }
 

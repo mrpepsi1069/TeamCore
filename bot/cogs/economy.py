@@ -13,7 +13,8 @@ from discord.ext import commands, tasks
 import database as db
 from database import economy as cash
 from shared.economy import (
-    CASINO_GAME_TIMEOUT, CASINO_GAMES, DAILY_MAX_STREAK, MAX_CASH, daily_reward, format_cash, play,
+    CASINO_GAME_TIMEOUT, CASINO_GAMES, DAILY_MAX_STREAK, DAILY_MIN_ACCOUNT_AGE_DAYS,
+    DAILY_MIN_MEMBER_HOURS, MAX_CASH, daily_reward, format_cash, play,
 )
 from utils.embeds import error_embed, info_embed, success_embed
 from utils.permissions import has_owner_perms
@@ -31,6 +32,43 @@ def _until_utc_midnight() -> str:
     left = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now
     hours, minutes = divmod(int(left.total_seconds()) // 60, 60)
     return f"{hours}h {minutes}m"
+
+
+def _humanise(delta: timedelta) -> str:
+    """'2d 3h' / '5h 20m' / '40m' for 'how long until this unlocks' messages."""
+    minutes = max(1, int(delta.total_seconds() // 60))
+    days, minutes = divmod(minutes, 1440)
+    hours, minutes = divmod(minutes, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _daily_lock_reason(user) -> str | None:
+    """Why this account can't claim /daily yet, or None when it can.
+
+    A fresh Discord account can be created for free, so an ungated daily would turn alt farming
+    into the cheapest way to earn Cash. Both the account's age and its time in this server are
+    checked, and neither depends on anything the caller can send.
+    """
+    now = datetime.now(timezone.utc)
+    created = getattr(user, "created_at", None)
+    if created is not None:
+        age = now - created
+        needed = timedelta(days=DAILY_MIN_ACCOUNT_AGE_DAYS)
+        if age < needed:
+            return (f"Your Discord account must be at least **{DAILY_MIN_ACCOUNT_AGE_DAYS} days** old "
+                    f"before it can claim daily Cash — about **{_humanise(needed - age)}** to go.")
+    joined = getattr(user, "joined_at", None)
+    if joined is not None:
+        here = now - joined
+        needed = timedelta(hours=DAILY_MIN_MEMBER_HOURS)
+        if here < needed:
+            return (f"You need **{DAILY_MIN_MEMBER_HOURS} hours** in this server before claiming daily Cash "
+                    f"— about **{_humanise(needed - here)}** to go.")
+    return None
 
 
 def _open_embed(opened: dict) -> discord.Embed:
@@ -214,9 +252,14 @@ class Economy(commands.Cog):
         view.message = await interaction.original_response()
 
     @app_commands.command(name="daily", description="Claim your daily Cash — consecutive days pay more")
+    @app_commands.guild_only()
     async def daily(self, interaction: discord.Interaction):
         if not await self.economy_on(interaction):
             return
+        blocked = _daily_lock_reason(interaction.user)
+        if blocked:
+            return await interaction.response.send_message(
+                embed=info_embed("Daily Cash Locked", blocked), ephemeral=True)
         if not await ack(interaction):
             return
         try:

@@ -12,6 +12,7 @@ const app = document.getElementById("app");
 // Hand-built pages: key -> [label, minimum level, renderer]
 const CUSTOM = {
   overview: ["Overview", "viewer", P.overviewPage],
+  economy: ["Economy", "manager", P.economyPage],
   members: ["Members", "staff", membersPage],
   schedule: ["Scheduling", "staff", (c) => schedulePage(c, "gametime")],
   settings: ["Settings", "manager", P.settingsPage],
@@ -41,7 +42,7 @@ const NAV = [
   ["Players", ["player_profiles", "tryouts", "awards", "scouting_reports", "hall_of_fame"]],
   ["Automation", ["workflows", "webhooks"]],
   ["Insights", ["activity", "memberstats"]],
-  ["Server", ["settings", "verification", "stats_channels", "moderation", "appeals", "staff_shifts", "staff_reports", "audit_logs", "backups", "export"]],
+  ["Server", ["economy", "settings", "verification", "stats_channels", "moderation", "appeals", "staff_shifts", "staff_reports", "audit_logs", "backups", "export"]],
   ["", ["preferences"]],
 ];
 

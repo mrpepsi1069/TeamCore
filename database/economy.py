@@ -21,12 +21,29 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from shared.economy import (
-    CASINO_GAME_TIMEOUT, STARTING_CASH, check_amount, check_balance, daily_reward, format_cash,
+    CASINO_GAME_TIMEOUT, CASINO_GAMES, STARTING_CASH, check_amount, check_balance, daily_reward,
+    format_cash, theoretical_rtp,
 )
 
 ACCOUNTS = "economy_accounts"
 LEDGER = "economy_transactions"
 GAMES = "casino_games"
+
+# Which ledger kinds create Cash, which destroy it, and which only move it between members.
+# `admin_set` replaces a balance outright, so it is counted but never treated as a flow.
+SOURCE_KINDS = ("starting", "daily", "casino_payout", "casino_refund", "pay_refund", "admin_credit")
+SINK_KINDS = ("casino_entry", "admin_debit")
+TRANSFER_KINDS = ("pay",)  # `pay_in` is the other half of the same transfer
+KIND_LABELS = {
+    "starting": "Starting balances",
+    "daily": "/daily claims",
+    "casino_payout": "Casino wins",
+    "casino_refund": "Casino refunds",
+    "pay_refund": "Failed-payment refunds",
+    "admin_credit": "Owner credits",
+    "casino_entry": "Casino entries",
+    "admin_debit": "Owner removals",
+}
 
 
 class EconomyError(Exception):
@@ -173,6 +190,87 @@ async def claim_daily(dbh, guild_id, user_id, today: date | None = None) -> dict
         {"$set": {"daily_day": day, "daily_streak": streak, "updated_at": _now()}},
     )
     return {"claimed": True, "amount": amount, "balance": new_balance, "streak": streak}
+
+
+def _signed(amount: int) -> str:
+    """+$500 Cash / -$500 Cash — format_cash only handles non-negative amounts."""
+    return f"-{format_cash(-amount)}" if amount < 0 else f"+{format_cash(amount)}"
+
+
+async def health(dbh, guild_id, days: int = 30) -> dict:
+    """The economy in one server: Cash in circulation, what created or destroyed it, and how
+    each casino game has actually paid out.
+
+    Real RTP is paid ÷ wagered over settled rounds, which is the only way to tell whether a
+    configured payout is behaving as intended; fancier games need many rounds before it settles.
+    """
+    gid = str(guild_id)
+    since = _now() - timedelta(days=int(days))
+
+    supply = await _c(dbh, ACCOUNTS).aggregate([
+        {"$match": {"guild_id": gid}},
+        {"$group": {"_id": None, "total": {"$sum": "$balance"}, "accounts": {"$sum": 1},
+                    "holders": {"$sum": {"$cond": [{"$gt": ["$balance", 0]}, 1, 0]}},
+                    "largest": {"$max": "$balance"}}},
+    ]).to_list(None)
+    s = supply[0] if supply else {}
+    total, holders = int(s.get("total") or 0), int(s.get("holders") or 0)
+    largest = int(s.get("largest") or 0)
+
+    flows = await _c(dbh, LEDGER).aggregate([
+        {"$match": {"guild_id": gid, "status": "done", "created_at": {"$gte": since}}},
+        {"$group": {"_id": "$kind", "count": {"$sum": 1}, "amount": {"$sum": "$amount"}}},
+    ]).to_list(None)
+    by_kind = {r["_id"]: {"count": int(r["count"]), "amount": int(r["amount"])} for r in flows}
+
+    def rows(kinds):
+        out = [{"kind": k, "label": KIND_LABELS.get(k, k), "count": by_kind[k]["count"],
+                "amount": by_kind[k]["amount"], "display": format_cash(by_kind[k]["amount"])}
+               for k in kinds if k in by_kind]
+        return sorted(out, key=lambda r: -r["amount"])
+
+    faucet = sum(by_kind[k]["amount"] for k in SOURCE_KINDS if k in by_kind)
+    sink = sum(by_kind[k]["amount"] for k in SINK_KINDS if k in by_kind)
+    moved = sum(by_kind[k]["amount"] for k in TRANSFER_KINDS if k in by_kind)
+
+    rounds = await _c(dbh, GAMES).aggregate([
+        {"$match": {"guild_id": gid, "status": {"$in": ["won", "lost"]}, "settled_at": {"$gte": since}}},
+        {"$group": {"_id": "$game", "rounds": {"$sum": 1},
+                    "wins": {"$sum": {"$cond": [{"$eq": ["$status", "won"]}, 1, 0]}},
+                    "wagered": {"$sum": "$entry"}, "paid": {"$sum": "$reward"}}},
+    ]).to_list(None)
+    games = []
+    for r in sorted(rounds, key=lambda x: -int(x["wagered"])):
+        wagered, paid, won = int(r["wagered"]), int(r["paid"]), int(r["wins"])
+        if wagered <= 0:
+            continue
+        spec = CASINO_GAMES.get(r["_id"])
+        games.append({
+            "game": r["_id"], "label": spec["label"] if spec else r["_id"],
+            "rounds": int(r["rounds"]), "wins": won, "win_rate": won / int(r["rounds"]),
+            "wagered": wagered, "wagered_display": format_cash(wagered),
+            "paid": paid, "paid_display": format_cash(paid),
+            "rtp": paid / wagered,
+            "expected_rtp": theoretical_rtp(r["_id"]) if spec else None,
+        })
+
+    return {
+        "window_days": int(days),
+        "supply": {"total": total, "total_display": format_cash(total), "accounts": int(s.get("accounts") or 0),
+                   "holders": holders, "largest": largest, "largest_display": format_cash(largest),
+                   "average": total // holders if holders else 0,
+                   "average_display": format_cash(total // holders if holders else 0)},
+        "flows": {
+            "faucet": faucet, "faucet_display": format_cash(faucet),
+            "sink": sink, "sink_display": format_cash(sink),
+            "net": faucet - sink, "net_display": _signed(faucet - sink),
+            "sources": rows(SOURCE_KINDS), "sinks": rows(SINK_KINDS),
+            "transfers": {"count": by_kind.get("pay", {}).get("count", 0), "amount": moved,
+                          "display": format_cash(moved)},
+            "sets": by_kind.get("admin_set", {}).get("count", 0),
+        },
+        "games": games,
+    }
 
 
 async def _claim(dbh, txn_id: str, **fields) -> None:

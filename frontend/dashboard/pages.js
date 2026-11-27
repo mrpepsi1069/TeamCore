@@ -109,6 +109,62 @@ export function settingsPage(c) {
   }, "Configuration");
 }
 
+export function economyPage(c) {
+  return wrap(c, "Cash economy", "Cash in circulation, what creates and destroys it, and how each casino game has actually paid out.", async () => {
+    const [report, { settings }] = await Promise.all([g("/economy"), g("/settings")]);
+    const stat = (value, label) => h("div", { class: "stat" }, h("b", {}, value ?? "—"), h("span", {}, label));
+    const s = report.supply, f = report.flows;
+    const kindList = (rows, empty) => (rows.length
+      ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "list-row" },
+          h("b", {}, r.label), h("span", { class: "sub" }, `${r.count.toLocaleString()} entr${r.count === 1 ? "y" : "ies"}`),
+          h("span", { class: "spacer" }), h("span", {}, r.display))))
+      : h("p", { class: "page-sub" }, empty));
+    const heads = ["Game", "Rounds", "Win %", "Wagered", "Paid out", "Real RTP", "Expected"];
+    const games = h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, heads.map((x) => h("th", {}, x)))),
+      h("tbody", {}, report.games.map((x) => h("tr", {},
+        h("td", {}, x.label),
+        h("td", { class: "num" }, x.rounds.toLocaleString()),
+        h("td", { class: "num" }, `${Math.round(x.win_rate * 100)}%`),
+        h("td", { class: "num" }, x.wagered_display),
+        h("td", { class: "num" }, x.paid_display),
+        h("td", { class: "num" }, `${(x.rtp * 100).toFixed(1)}%`),
+        h("td", { class: "num" }, x.expected_rtp == null ? "—" : `${(x.expected_rtp * 100).toFixed(1)}%`))))));
+
+    const { form, read } = settingsForm(["economy_enabled"], settings);
+    const save = h("button", { class: "btn primary", disabled: !can("admin") || null, onclick: async (e) => {
+      e.target.disabled = true;
+      try { await g("/settings", { method: "PUT", body: read() }); toast("Cash setting saved"); }
+      catch (err) { toast(Object.values(err.errors || {})[0] || err.message, "err"); }
+      e.target.disabled = !can("admin");
+    } }, "Save");
+
+    return h("div", {},
+      h("div", { class: "grid" },
+        stat(s.total_display, "Cash in circulation"),
+        stat(s.holders.toLocaleString(), `Members holding Cash (of ${s.accounts.toLocaleString()} accounts)`),
+        stat(s.average_display, "Average holding"),
+        stat(s.largest_display, "Largest balance")),
+      h("div", { class: "card" }, h("h2", {}, `Faucet vs sink · last ${report.window_days} days`),
+        h("div", { class: "grid" },
+          stat(f.faucet_display, "Cash created"),
+          stat(f.sink_display, "Cash destroyed"),
+          stat(f.net_display, "Net change"),
+          stat(f.transfers.display, "Moved between members")),
+        h("p", { class: "page-sub" }, "Created = starting balances, /daily, casino wins and refunds, and owner credits. Destroyed = casino entries and owner removals. Transfers move Cash without creating it; owner “set” edits are counted separately."),
+        h("div", { class: "split" },
+          h("div", {}, h("h3", {}, "Created by"), kindList(f.sources, "Nothing created Cash in this window.")),
+          h("div", {}, h("h3", {}, "Destroyed by"), kindList(f.sinks, "Nothing removed Cash in this window.")))),
+      h("div", { class: "card" }, h("h2", {}, "Casino payout reality check"),
+        h("p", { class: "page-sub" }, "Real RTP is paid ÷ wagered over settled rounds. Expected is the win chance × payout; short windows wander, so trust a game once it has a few hundred rounds."),
+        report.games.length ? games : h("p", { class: "page-sub" }, "No settled games in this window yet — play a few rounds and reload.")),
+      h("div", { class: "card" }, h("h2", {}, "Cash commands"),
+        h("p", { class: "page-sub" }, "Turn the economy off to hide /balance, /pay, /daily and /casino in this server. A game already open can still be settled or refunded."),
+        form,
+        h("div", { class: "row end" }, can("admin") ? null : h("span", { class: "sub" }, "Only admins can change this."), save)));
+  }, "Server");
+}
+
 export function verificationPage(c) {
   return wrap(c, "Verification", "Members press one button to receive a role. That role can never carry moderator or admin permissions.", async () => {
     const { settings } = await g("/settings");

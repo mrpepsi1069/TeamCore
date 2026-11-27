@@ -110,6 +110,8 @@ shown the same way everywhere: `$1,000 Cash` (`/balance`, `/pay`, casino results
 * `/daily` — claims today's Cash once: `$500` on the first day, `+$100` for each consecutive day up
   to `$1,100` from day 7. Missing a day resets the streak to day 1. The claim is keyed by the UTC
   date, so a double press can only ever pay once, and the result ends with the **Final balance**.
+  To stop alt farming, the Discord account must be at least **7 days old** and the member must have
+  been in the server for **24 hours**; otherwise the reply says how long is left.
 * `/casino <game> <entry>` — Coin Flip (50%, pays 1.9×), Dice (roll 5–6, pays 2.75×), Slots
   (three of a kind, pays 8×), Wheel (💎, 1 in 5, pays 4.5×), High Card (J/Q/K/A, pays 2.9×) or
   Lucky Sevens (two dice total 7, pays 5.25×). The entry is taken when the game opens, the **Play**
