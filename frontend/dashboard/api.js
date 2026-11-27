@@ -14,16 +14,26 @@ export class ApiError extends Error {
   }
 }
 
+const UNREACHABLE = "The TeamCore API didn't answer — it may be restarting. Try again in a moment; if it keeps happening, check your connection and the API address in config.js.";
+
+// The fetch throws — instead of answering with a status — when no usable response comes back at all: the network
+// is down, or the reply arrived without CORS headers (a proxy error page while the API restarts or wakes up).
+// A GET changes nothing, so it is safe to retry a couple of times before giving up on the page.
 export async function api(path, { method = "GET", body, raw = false } = {}) {
   const headers = {};
   const t = getToken();
   if (t) headers.Authorization = `Bearer ${t}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  const attempts = method === "GET" ? 3 : 1;
   let res;
-  try {
-    res = await fetch(API + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
-  } catch {
-    throw new ApiError(0, "Can't reach the TeamCore API. Check your connection or the API address in config.js.");
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await fetch(API + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+      break;
+    } catch {
+      if (attempt >= attempts) throw new ApiError(0, UNREACHABLE);
+      await new Promise((r) => setTimeout(r, 700 * attempt));
+    }
   }
   if (res.status === 401) {
     setToken(null);

@@ -2,6 +2,7 @@
 
 import os
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -52,6 +53,19 @@ async def guard(request: Request, call_next):
 # CORS: only the configured frontend origin(s). No wildcard, and no cookies are used, so credentials stay off.
 app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS, allow_credentials=False,
                    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type"], max_age=600)
+
+# Starlette answers an unhandled exception from *outside* CORSMiddleware, so a plain 500 reaches the browser without
+# CORS headers and the dashboard can only report "can't reach the API". The allowed origin is added by hand instead.
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    traceback.print_exc()
+    resp = JSONResponse({"detail": "The server hit an unexpected error — please try again."}, status_code=500)
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if origin in settings.ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+    return resp
+
 
 app.include_router(auth.router)
 app.include_router(routes_guild.router)

@@ -192,6 +192,15 @@ async def claim_daily(dbh, guild_id, user_id, today: date | None = None) -> dict
     return {"claimed": True, "amount": amount, "balance": new_balance, "streak": streak}
 
 
+def _int(value, default: int = 0) -> int:
+    """A number out of an aggregation. Mongo returns an int normally, but a row written by hand or by an
+    older version can come back as a string or Decimal128 — that must not take the whole report down."""
+    try:
+        return int(value.to_decimal()) if hasattr(value, "to_decimal") else int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _signed(amount: int) -> str:
     """+$500 Cash / -$500 Cash — format_cash only handles non-negative amounts."""
     return f"-{format_cash(-amount)}" if amount < 0 else f"+{format_cash(amount)}"
@@ -214,14 +223,14 @@ async def health(dbh, guild_id, days: int = 30) -> dict:
                     "largest": {"$max": "$balance"}}},
     ]).to_list(None)
     s = supply[0] if supply else {}
-    total, holders = int(s.get("total") or 0), int(s.get("holders") or 0)
-    largest = int(s.get("largest") or 0)
+    total, holders = _int(s.get("total")), _int(s.get("holders"))
+    largest = _int(s.get("largest"))
 
     flows = await _c(dbh, LEDGER).aggregate([
         {"$match": {"guild_id": gid, "status": "done", "created_at": {"$gte": since}}},
         {"$group": {"_id": "$kind", "count": {"$sum": 1}, "amount": {"$sum": "$amount"}}},
     ]).to_list(None)
-    by_kind = {r["_id"]: {"count": int(r["count"]), "amount": int(r["amount"])} for r in flows}
+    by_kind = {r["_id"]: {"count": _int(r["count"]), "amount": _int(r["amount"])} for r in flows}
 
     def rows(kinds):
         out = [{"kind": k, "label": KIND_LABELS.get(k, k), "count": by_kind[k]["count"],
@@ -240,14 +249,14 @@ async def health(dbh, guild_id, days: int = 30) -> dict:
                     "wagered": {"$sum": "$entry"}, "paid": {"$sum": "$reward"}}},
     ]).to_list(None)
     games = []
-    for r in sorted(rounds, key=lambda x: -int(x["wagered"])):
-        wagered, paid, won = int(r["wagered"]), int(r["paid"]), int(r["wins"])
+    for r in sorted(rounds, key=lambda x: -_int(x["wagered"])):
+        wagered, paid, won = _int(r["wagered"]), _int(r["paid"]), _int(r["wins"])
         if wagered <= 0:
             continue
         spec = CASINO_GAMES.get(r["_id"])
         games.append({
             "game": r["_id"], "label": spec["label"] if spec else r["_id"],
-            "rounds": int(r["rounds"]), "wins": won, "win_rate": won / int(r["rounds"]),
+            "rounds": _int(r["rounds"]), "wins": won, "win_rate": won / _int(r["rounds"] or 1),
             "wagered": wagered, "wagered_display": format_cash(wagered),
             "paid": paid, "paid_display": format_cash(paid),
             "rtp": paid / wagered,
@@ -256,7 +265,7 @@ async def health(dbh, guild_id, days: int = 30) -> dict:
 
     return {
         "window_days": int(days),
-        "supply": {"total": total, "total_display": format_cash(total), "accounts": int(s.get("accounts") or 0),
+        "supply": {"total": total, "total_display": format_cash(total), "accounts": _int(s.get("accounts")),
                    "holders": holders, "largest": largest, "largest_display": format_cash(largest),
                    "average": total // holders if holders else 0,
                    "average_display": format_cash(total // holders if holders else 0)},

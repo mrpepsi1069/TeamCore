@@ -235,7 +235,8 @@ export function setAccent(hex) {
 }
 
 export function errorBox(e) {
-  return h("div", { class: "card" }, h("h2", {}, "Something went wrong"), h("p", { class: "page-sub" }, e.message || String(e)));
+  return h("div", { class: "card" }, h("h2", {}, "Something went wrong"), h("p", { class: "page-sub" }, e.message || String(e)),
+    h("div", { class: "row end" }, h("button", { class: "btn", onclick: () => location.reload() }, "Try again")));
 }
 
 export function barChart(points, tip = (p) => `${p.label}: ${p.value}`) {
