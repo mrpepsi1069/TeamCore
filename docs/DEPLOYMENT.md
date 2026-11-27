@@ -33,7 +33,8 @@ Same as before (Koyeb etc.). **The start command changed** because the code move
 * Run: `python bot/bot.py`
 * Environment: `DISCORD_TOKEN`, `MONGODB_URI` (or `DATABASE_URL`), `PORT`.
 * Enable the **Server Members Intent** in the Developer Portal (already required before).
-* On first start it applies migrations 1-3 and publishes each server's channels/roles to the dashboard.
+* On first start it applies migrations 1-4 and publishes each server's channels/roles to the dashboard.
+* Cash (`/balance`, `/pay`, `/casino`) is owned by the bot: balances in `economy_accounts`, an append-only ledger in `economy_transactions` (unique transaction ids), pending games in `casino_games`. The website only reads balances for the Members page, so restarting either side never changes anyone's Cash.
 
 ## D. Updating an existing install
 1. Back up: Atlas → **Backup/Export**, or the dashboard's **Data Export** (per server).

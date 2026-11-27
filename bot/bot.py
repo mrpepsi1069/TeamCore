@@ -50,6 +50,7 @@ DB_COMMANDS = {
     "matchmaking", "matchmaking-queue", "matchmaking-cancel", "setup", "disableglobalmessages",
     "record", "stats", "lock", "unlock", "poll", "giveaway", "countdown", "activity", "rolepanel",
     "announcement", "backup", "memberstats", "suggestion", "roster", "match",
+    "balance", "pay", "casino", "cash",
 }
 
 
@@ -87,7 +88,7 @@ COGS = [
     "cogs.poll", "cogs.giveaway", "cogs.countdown", "cogs.activity", "cogs.embed", "cogs.rolepanel",
     "cogs.announcement", "cogs.backup", "cogs.memberstats", "cogs.suggestion",
     # website dashboard bridge + automation (additive: the bot runs fine without the website)
-    "cogs.dashboard_bridge", "cogs.automation", "cogs.roster", "cogs.match",
+    "cogs.dashboard_bridge", "cogs.automation", "cogs.roster", "cogs.match", "cogs.economy",
 ]
 
 

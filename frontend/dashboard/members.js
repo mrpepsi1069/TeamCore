@@ -67,6 +67,7 @@ export async function membersPage(c) {
       h("td", {}, m.teams.length
         ? h("div", { class: "row" }, m.teams.map((t) => h("span", { class: "chip solid" }, t.team_name + (t.position ? ` · ${t.position}` : ""))))
         : h("span", { class: "sub" }, "—")),
+      h("td", { class: "nowrap" }, h("b", {}, m.cash_display || "$0 Cash")),
       h("td", {}, m.owns_server ? h("span", { class: "badge plain" }, "Owner")
         : m.level ? h("span", { class: "badge approved plain" }, LEVEL_LABEL[m.level] || m.level)
           : h("span", { class: "sub" }, "—")),
@@ -78,7 +79,7 @@ export async function membersPage(c) {
     ];
     table.append(h("div", { class: "table-wrap" },
       h("table", {},
-        h("thead", {}, h("tr", {}, ["Member", "Team", "Dashboard access", "Discord roles", "Joined", ""].map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, ["Member", "Team", "Cash", "Dashboard access", "Discord roles", "Joined", ""].map((x) => h("th", {}, x)))),
         h("tbody", {}, rows.map((m) => h("tr", {}, cells(m)))))));
   };
 
@@ -137,6 +138,7 @@ function manage(m, onSaved) {
     h("div", { class: "member-cell" },
       m.avatar ? h("img", { class: "avatar", src: m.avatar, alt: "", referrerpolicy: "no-referrer" }) : h("span", { class: "avatar initial" }, (m.display_name || "?").charAt(0)),
       h("div", { class: "who" }, h("b", {}, m.display_name), h("span", {}, `${m.username || ""} · ${m.user_id}`))),
+    h("p", { class: "help" }, `Cash balance: ${m.cash_display || "$0 Cash"} — /balance, /pay and /casino in Discord move it.`),
     h("h3", { class: "section-label" }, "Dashboard access"),
     can("admin") ? h("div", { class: "row stretch" }, access,
       h("span", { class: "sub" }, "Viewer reads, staff actions, manager runs the server.")) : h("p", { class: "page-sub" }, "Only admins can change dashboard access."),

@@ -182,10 +182,18 @@ async def _migration_3_teams_rosters() -> None:
         print(f"⚠️ {err}")
 
 
+async def _migration_4_economy() -> None:
+    """Cash: account, ledger and casino-game indexes for databases that already ran 1-3."""
+    from database.schema import apply_indexes
+    for err in await apply_indexes(_db):
+        print(f"⚠️ {err}")
+
+
 _MIGRATIONS = [
     (1, _migration_1_feature_indexes),
     (2, _migration_2_dashboard_indexes),
     (3, _migration_3_teams_rosters),
+    (4, _migration_4_economy),
 ]
 
 

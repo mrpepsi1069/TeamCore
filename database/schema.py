@@ -51,6 +51,13 @@ INDEXES = [
     ("scouting_reports", [("guild_id", 1), ("created_at", -1)], {}),
     ("hall_of_fame", [("guild_id", 1), ("created_at", -1)], {}),
     ("announcements", [("guild_id", 1), ("created_at", -1)], {}),
+    # Cash economy (database/economy.py): one account per member per server, an append-only
+    # ledger keyed by transaction id, and pending casino games waiting for their result.
+    ("economy_accounts", [("guild_id", 1), ("user_id", 1)], {"unique": True}),
+    ("economy_accounts", [("guild_id", 1), ("balance", -1)], {}),
+    ("economy_transactions", [("guild_id", 1), ("from_id", 1), ("created_at", -1)], {}),
+    ("economy_transactions", [("guild_id", 1), ("to_id", 1), ("created_at", -1)], {}),
+    ("casino_games", [("status", 1), ("expires_at", 1)], {}),
 ]
 
 

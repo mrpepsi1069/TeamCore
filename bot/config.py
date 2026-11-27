@@ -16,7 +16,7 @@ def _int_env(name: str, default: int) -> int:
 
 # ── Hard-coded IDs (previously scattered across 6 files) ─────────────────────
 # Override any of these with an environment variable; defaults keep the old behaviour.
-OWNER_ID              = _int_env("BOT_OWNER_ID",         1314823988253560852)
+OWNER_ID              = _int_env("BOT_OWNER_ID", _int_env("OWNER_ID", 1314823988253560852))  # /cash + owner tools
 SUGGESTION_CHANNEL_ID = _int_env("SUGGESTION_CHANNEL_ID", 1466284506385219686)
 LOG_GUILD_ID          = _int_env("LOG_GUILD_ID",          1575685125516296194)
 TEMPLATE_GUILD_ID     = _int_env("TEMPLATE_GUILD_ID",     1487243792917463072)

@@ -9,9 +9,11 @@ and only Discord role changes are handed to the bot as a job.
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
+from shared.economy import STARTING_CASH, format_cash
 from shared.resources import F, clean_value
+from database.economy import balances as cash_balances
 from backend import audit, bridge
-from backend.db import coll
+from backend.db import coll, db as db_handle
 from backend.deps import Ctx, guild_ctx
 from backend.resources import err, finish, team_of
 from backend.util import now, ser
@@ -57,6 +59,11 @@ async def _rows(ctx: Ctx) -> list[dict]:
         if uid not in seen and uid not in grants:
             out.append(_row(uid, {"username": rows[0].get("username")}, {}, rows, owner_id))
     out.sort(key=lambda r: (r["display_name"] or "").lower())
+    # Cash in one query; a member who never touched the economy still has the starting balance.
+    held = await cash_balances(db_handle(), gid, [r["user_id"] for r in out])
+    for r in out:
+        r["cash"] = held.get(r["user_id"], STARTING_CASH)
+        r["cash_display"] = format_cash(r["cash"])
     return out
 
 

@@ -12,7 +12,7 @@
 | `/bot` | The discord.py bot (all existing commands preserved) + `cogs/dashboard_bridge.py` (job worker, server cache) and `cogs/automation.py` (scheduled messages, reminders, workflows) |
 | `/backend` | FastAPI app: Discord OAuth2, sessions, per-server permission checks, generic CRUD, bot bridge |
 | `/frontend` | Static site: `index.html` (landing), `dashboard/` (the app). No build step, no secrets |
-| `/database` | `__init__.py` (the bot's Motor layer + migrations), `teams.py` (teams/rosters/competitions/matches — used by **both** bot and backend), `schema.py` (indexes) |
+| `/database` | `__init__.py` (the bot's Motor layer + migrations), `teams.py` (teams/rosters/competitions/matches — used by **both** bot and backend), `economy.py` (Cash accounts, the transaction ledger, casino games — also used by both), `schema.py` (indexes) |
 | `/shared` | Settings, access levels, the website→bot job contract, resource field specs, security helpers |
 
 ## How a dashboard action works
@@ -67,6 +67,8 @@ A team is also a Discord role, whichever side creates it. From the dashboard, th
 The sync afterwards never blocks a save: editing fires the job only when the name or colour changed (which is also how a team created before the colour field gets its role), and deleting fires `team_role_delete` so no orphan role is left behind. A bot that is offline just leaves the job queued.
 
 Internal: `sessions` (hashed tokens, TTL), `oauth_states` (TTL), `bot_jobs` (TTL 24 h), `counters`, `meta` (schema version), `schedule_polls` (gametimes/times posted from the dashboard, with their message links).
+
+Cash: `economy_accounts` (one balance per member per server, opened with $5,000), `economy_transactions` (append-only ledger, `_id` = the unique transaction id, so a payment or casino payout can only ever be applied once) and `casino_games` (pending/won/lost/expired games). The bot moves Cash; the backend only reads balances (`database/economy.py` works with both database handles).
 
 Every server-specific document carries `guild_id`; all queries filter on it and every list has a `(guild_id, …)` index (`database/schema.py`).
 

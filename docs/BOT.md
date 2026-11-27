@@ -48,6 +48,11 @@ Slash commands are synced automatically on startup. `bot.py` is the single entry
 | `/contract view` | View your contract | Everyone |
 | `/suggest` | Submit a suggestion | Everyone |
 | `/premium` | View premium pricing | Everyone |
+| `/balance [member]` | Show Cash (yours or another member's) | Everyone |
+| `/pay <member> <amount>` | Send Cash to another member | Everyone |
+| `/casino <game> <entry>` | Play Coin Flip, Dice, Slots, Wheel, High Card or Lucky Sevens | Everyone |
+| `/cash add\|remove\|set <member> <amount>` | Add, remove or set one member's Cash | Bot owner |
+| `/cash add-all\|remove-all\|set-all <amount>` | The same for every member in the server | Bot owner |
 | `/matchmaking` | Open the Core Match Making board | Everyone |
 | `/matchmaking-queue` | View who's currently looking for a match | Everyone |
 | `/matchmaking-cancel` | Cancel your pending matchmaking request(s) | Everyone |
@@ -88,6 +93,38 @@ Slash commands are synced automatically on startup. `bot.py` is the single entry
 The channel also gets a **Matchmaking Pings** message: reacting with ⚽ / 🏈 / 🏀 gives you the `Matchmaking Ping - <game>` role (created automatically), and un-reacting removes it. Every request posted for a game pings that game's role.
 
 Matchmaking is pooled across every server the bot is in; requests are auto-removed after 24 hours.
+
+---
+
+## Cash
+
+Every member starts with **$5,000 Cash** the first time their balance is needed. Cash is per server,
+there is no bank or wallet, and a balance can reach exactly $0 but never go below it. Every amount is
+shown the same way everywhere: `$1,000 Cash` (`/balance`, `/pay`, casino results and the dashboard).
+
+* `/balance [member]` — shows a balance.
+* `/pay <member> <amount>` — sends Cash. You can send your whole balance, but not more; zero,
+  negative, self- and bot-payments are refused. Success reads `Successfully sent $400 Cash.` and
+  shows both updated balances.
+* `/casino <game> <entry>` — Coin Flip (50%, pays 1.9×), Dice (roll 5–6, pays 2.75×), Slots
+  (three of a kind, pays 8×), Wheel (💎, 1 in 5, pays 4.5×), High Card (J/Q/K/A, pays 2.9×) or
+  Lucky Sevens (two dice total 7, pays 5.25×). The entry is taken when the game opens, the **Play**
+  button settles it exactly once (a win credits the configured reward, a loss pays nothing back), and
+  a game nobody plays expires after 90 seconds with its entry refunded — including after a bot
+  restart, because a sweep refunds any expired game.
+
+**Bot-owner tools.** `/cash add`, `/cash remove` and `/cash set` change one member's Cash, and
+`/cash add-all`, `/cash remove-all` and `/cash set-all` do the same for every non-bot member in the
+server. They are limited to the owner's ID (`BOT_OWNER_ID` or `OWNER_ID` in the bot's `.env`) and
+always answer privately.
+Removing never overdraws: members holding less than the amount are skipped and counted in the reply.
+Every edit is a ledger row tagged with the owner and a batch id, so an add-all run can be traced.
+
+All balance changes are single conditional MongoDB updates: a debit only applies while
+`balance >= amount`, and each transaction's ledger row is claimed by its unique id before money
+moves. That is what makes simultaneous commands unable to spend the same Cash twice, overdraw an
+account, or pay a casino win twice. Accounts live in `economy_accounts`, every movement is in
+`economy_transactions`, and pending games in `casino_games`.
 
 ---
 
