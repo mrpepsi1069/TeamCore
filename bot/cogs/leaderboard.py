@@ -11,7 +11,7 @@ from utils.permissions import has_manager_perms
 from utils.records import (
     competition_autocomplete, fmt_pct, fmt_record, list_teams, sort_teams,
 )
-from utils.ui import brand, send_paged
+from utils.ui import ack, brand, send_paged
 
 SORTS = [
     app_commands.Choice(name="Wins", value="wins"),
@@ -88,7 +88,8 @@ class Leaderboard(commands.Cog):
     async def cash(self, interaction: discord.Interaction):
         # Cash is per server, so this is the only board that adds balances up across servers.
         # It scans every account, so acknowledge before the aggregation outlasts Discord's window.
-        await interaction.response.defer()
+        if not await ack(interaction):
+            return
         rows = await economy_db.global_leaderboard(db.handle(), limit=10)
         if not rows:
             return await interaction.followup.send(

@@ -13,6 +13,7 @@ from database import economy as cash
 from shared.economy import CASINO_GAME_TIMEOUT, CASINO_GAMES, MAX_CASH, format_cash, play
 from utils.embeds import error_embed, info_embed, success_embed
 from utils.permissions import has_owner_perms
+from utils.ui import ack
 
 GAME_CHOICES = [
     app_commands.Choice(name=f"{spec['label']} — {spec['odds']}", value=key)
@@ -28,16 +29,12 @@ def _closed_view() -> discord.ui.View:
 
 
 def _result_embed(game: dict, won: bool, reward: int, balance: int) -> discord.Embed:
+    """The settled game: what happened, and the member's Cash after it."""
     spec = CASINO_GAMES[game["game"]]
-    if won:
-        return success_embed(
-            f"{spec['emoji']} You won {format_cash(reward)}!",
-            f"{spec['label']} · {game.get('detail') or ''}\nBalance: **{format_cash(balance)}**",
-        )
-    return error_embed(
-        f"{spec['emoji']} You lost {format_cash(game['entry'])}",
-        f"{spec['label']} · {game.get('detail') or ''}\nBalance: **{format_cash(balance)}**",
-    )
+    title = (f"{spec['emoji']} You won {format_cash(reward)}!" if won
+             else f"{spec['emoji']} You lost {format_cash(game['entry'])}")
+    body = f"{spec['label']} · {game.get('detail') or ''}\n**Final balance: {format_cash(balance)}**"
+    return (success_embed if won else error_embed)(title, body)
 
 
 class CasinoView(discord.ui.View):
@@ -79,7 +76,8 @@ class Economy(commands.Cog):
         target = member or interaction.user
         # Acknowledge before touching MongoDB: Discord invalidates an interaction that has not
         # been answered within 3 seconds, and a cold database round-trip can take longer.
-        await interaction.response.defer()
+        if not await ack(interaction):
+            return
         try:
             held = await cash.balance(db.handle(), interaction.guild_id, target.id)
         except cash.EconomyError as e:
@@ -98,7 +96,8 @@ class Economy(commands.Cog):
         if member.bot:
             return await interaction.response.send_message(
                 embed=error_embed("Bots Can't Be Paid", "Cash can only be sent to members."), ephemeral=True)
-        await interaction.response.defer()  # two accounts + a ledger write can outlast the 3-second window
+        if not await ack(interaction):  # two accounts + a ledger write can outlast the 3-second window
+            return
         try:
             result = await cash.transfer(db.handle(), interaction.guild_id, interaction.user.id,
                                          member.id, amount, interaction.id)
@@ -120,7 +119,8 @@ class Economy(commands.Cog):
         # The entry is charged before the game message exists, so acknowledge first: if the
         # database is slow and the token expires, the member's Cash is taken and no message
         # ever appears (the expiry sweep refunds it, but nobody should be left waiting on that).
-        await interaction.response.defer()
+        if not await ack(interaction):
+            return
         try:
             opened = await cash.open_game(db.handle(), interaction.guild_id, interaction.user.id,
                                           game.value, entry)
@@ -143,7 +143,8 @@ class Economy(commands.Cog):
         view.message = await interaction.original_response()
 
     async def settle(self, interaction: discord.Interaction, game: dict, message: discord.Message | None):
-        await interaction.response.defer()
+        if not await ack(interaction):
+            return
         outcome = play(game["game"], int(game["entry"]))
         try:
             result = await cash.settle_game(db.handle(), game["game_id"], game["guild_id"], game["user_id"],
@@ -178,7 +179,7 @@ class Economy(commands.Cog):
                 embed=info_embed(
                     "⌛ Game Expired",
                     f"No result was played, so your {format_cash(game['entry'])} entry was refunded.\n"
-                    f"Balance: **{format_cash(result['balance'])}**",
+                    f"**Final balance: {format_cash(result['balance'])}**",
                 ),
                 view=_closed_view(),
             )
@@ -200,7 +201,8 @@ class Economy(commands.Cog):
     async def _single(self, interaction: discord.Interaction, member: discord.User, amount: int, mode: str):
         if not await self._owner_only(interaction):
             return
-        await interaction.response.defer(ephemeral=True)
+        if not await ack(interaction, ephemeral=True):
+            return
         try:
             result = await cash.admin_adjust(db.handle(), interaction.guild_id, member.id, mode, amount,
                                              interaction.user.id)
@@ -223,7 +225,8 @@ class Economy(commands.Cog):
         if not await self._owner_only(interaction):
             return
         ids = [str(m.id) for m in interaction.guild.members if not m.bot]
-        await interaction.response.defer(ephemeral=True)
+        if not await ack(interaction, ephemeral=True):
+            return
         try:
             result = await cash.admin_adjust_many(db.handle(), interaction.guild_id, ids, mode, amount,
                                                   interaction.user.id)

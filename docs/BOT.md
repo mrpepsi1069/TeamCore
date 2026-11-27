@@ -109,7 +109,8 @@ shown the same way everywhere: `$1,000 Cash` (`/balance`, `/pay`, casino results
 * `/casino <game> <entry>` — Coin Flip (50%, pays 1.9×), Dice (roll 5–6, pays 2.75×), Slots
   (three of a kind, pays 8×), Wheel (💎, 1 in 5, pays 4.5×), High Card (J/Q/K/A, pays 2.9×) or
   Lucky Sevens (two dice total 7, pays 5.25×). The entry is taken when the game opens, the **Play**
-  button settles it exactly once (a win credits the configured reward, a loss pays nothing back), and
+  button settles it exactly once (a win credits the configured reward, a loss pays nothing back, and
+  every result ends with the member's **Final balance**), and
   a game nobody plays expires after 90 seconds with its entry refunded — including after a bot
   restart, because a sweep refunds any expired game.
 

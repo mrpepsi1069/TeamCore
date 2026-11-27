@@ -11,6 +11,20 @@ def brand(title: str, description: str = None, color: int = None) -> discord.Emb
     return e
 
 
+async def ack(interaction: discord.Interaction, *, ephemeral: bool = False) -> bool:
+    """Acknowledge an interaction before slow work, and say whether it worked.
+
+    False means Discord had already invalidated the interaction (its 3-second window closed,
+    e.g. a queued or delayed delivery): nothing can be sent to that click, so the caller should
+    stop quietly instead of turning it into a bot-error report.
+    """
+    try:
+        await interaction.response.defer(ephemeral=ephemeral)
+        return True
+    except discord.NotFound:
+        return False
+
+
 def bar(fraction: float, width: int = 10) -> str:
     n = round(max(0.0, min(1.0, fraction)) * width)
     return "█" * n + "░" * (width - n)
