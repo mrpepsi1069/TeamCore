@@ -11,6 +11,9 @@ CURRENCY_SYMBOL = "$"
 STARTING_CASH = 5000          # what every member has the first time their balance is needed
 MAX_CASH = 1_000_000_000      # sanity cap for a single entry / payment (not a balance cap)
 CASINO_GAME_TIMEOUT = 90      # seconds a casino game waits for "Play" before it is refunded
+DAILY_BASE = 500              # what /daily pays on the first day of a streak
+DAILY_STREAK_BONUS = 100      # extra Cash for each consecutive day claimed
+DAILY_MAX_STREAK = 7          # the bonus stops growing here (day 7 pays the most)
 
 
 def format_cash(amount) -> str:
@@ -43,6 +46,12 @@ def check_balance(value) -> int:
 def payout(entry: int, payout_bps: int) -> int:
     """A win pays `payout_bps` basis points of the entry (19000 = 1.9x), never less than 1."""
     return max(1, int(entry) * int(payout_bps) // 10000)
+
+
+def daily_reward(streak: int) -> int:
+    """What one `/daily` claim pays on a given streak day (day 1 = the base amount)."""
+    day = max(1, min(int(streak), DAILY_MAX_STREAK))
+    return DAILY_BASE + DAILY_STREAK_BONUS * (day - 1)
 
 
 SLOT_SYMBOLS = ("🍒", "🔔", "7️⃣")

@@ -22,7 +22,9 @@ CHANNEL_KEYS = ["log_channel", "announce_channel", "gametime_channel", "matchmak
 SETTING_FIELDS = (
     [{"key": k, "type": "role"} for k in ROLE_KEYS + ["verify_role"]]
     + [{"key": k, "type": "channel"} for k in CHANNEL_KEYS]
-    + [{"key": "activity_enabled", "type": "bool"}, {"key": "activity_channels", "type": "channels"}, {"key": "timezone", "type": "timezone"}]
+    + [{"key": "activity_enabled", "type": "bool"}, {"key": "activity_channels", "type": "channels"},
+       # On unless a server turns it off, so an unset field must read as True (see _read_settings).
+       {"key": "economy_enabled", "type": "bool", "default": True}, {"key": "timezone", "type": "timezone"}]
 )
 
 
@@ -99,7 +101,7 @@ async def refresh_cache(ctx: Ctx = Depends(guild_ctx)):
 def _read_settings(cfg: dict) -> dict:
     out = {}
     for f in SETTING_FIELDS:
-        v = cfg.get(f["key"])
+        v = cfg.get(f["key"], f.get("default"))
         out[f["key"]] = [str(x) for x in v] if isinstance(v, list) else (str(v) if v is not None and f["type"] in ("role", "channel") else v)
     return out
 

@@ -66,6 +66,7 @@ const LABELS = {
   results_channel: "Results channel (imported matches are posted here)",
   verify_channel: "Verification channel", activity_enabled: "Track message activity",
   activity_channels: "Only track these channels (empty = all)", timezone: "Server timezone",
+  economy_enabled: "Cash economy (balances, /pay, /daily, /casino)",
 };
 
 function settingsForm(keys, saved) {
@@ -94,7 +95,8 @@ export function settingsPage(c) {
     const { settings } = await g("/settings");
     const keys = ["admin_role", "franchise_owner_role", "general_manager_role", "head_coach_role", "assistant_coach_role",
       "log_channel", "announce_channel", "gametime_channel", "matchmaking_channel", "contract_channel", "awards_channel",
-      "league_log_channel", "suggestion_channel", "memberstats_channel", "results_channel", "activity_enabled", "activity_channels", "timezone"];
+      "league_log_channel", "suggestion_channel", "memberstats_channel", "results_channel", "activity_enabled", "activity_channels",
+      "economy_enabled", "timezone"];
     const { form, read } = settingsForm(keys, settings);
     const save = h("button", { class: "btn primary", disabled: !can("admin") || null, onclick: async (e) => {
       e.target.disabled = true;

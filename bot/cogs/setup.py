@@ -61,6 +61,15 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
         ch_lines += f"{check(cid)} **{label}** — {f'<#{cid}>' if cid else 'Not set'}\n"
     embed.add_field(name="📢 Channels", value=ch_lines, inline=False)
 
+    # Cash — off is deliberate and reversible; a missing value means on.
+    cash_on = cfg.get("economy_enabled", True)
+    embed.add_field(
+        name="💵 Cash",
+        value=("✅ Enabled — `/balance`, `/pay`, `/daily` and `/casino` are available" if cash_on
+               else "❌ Turned off — Cash commands answer privately and move nothing"),
+        inline=False,
+    )
+
     # Progress bar
     total = len(ROLE_HIERARCHY) + len(CHANNEL_KEYS)
     done = sum(1 for k in list(ROLE_HIERARCHY) + list(CHANNEL_KEYS) if cfg.get(k))
@@ -81,11 +90,19 @@ async def build_status_embed(guild_id: str) -> discord.Embed:
 # DROPDOWNS
 # ─────────────────────────────────────────────
 
+def _show_economy(button: discord.ui.Button, enabled: bool) -> None:
+    """Label the Cash toggle with the state it will switch to when pressed."""
+    button.label = f"Cash: {'On' if enabled else 'Off'}"
+    button.style = discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary
+
+
 async def _refresh_panel(panel: "SetupView") -> None:
     """Redraw the main /setup panel (the message the owner is actually looking at)."""
     if panel.parent_interaction is None:
         return
     try:
+        cfg = await db.get_guild_config(str(panel.parent_interaction.guild_id)) or {}
+        _show_economy(panel.economy_button, cfg.get("economy_enabled", True))
         embed = await build_status_embed(str(panel.parent_interaction.guild_id))
         await panel.parent_interaction.edit_original_response(embed=embed, view=panel)
     except discord.HTTPException:
@@ -132,11 +149,13 @@ class ChannelSelect(discord.ui.ChannelSelect):
 # ─────────────────────────────────────────────
 
 class SetupView(discord.ui.View):
-    def __init__(self, owner_id: int, parent_interaction: discord.Interaction | None = None):
+    def __init__(self, owner_id: int, parent_interaction: discord.Interaction | None = None,
+                 economy_on: bool = True):
         super().__init__(timeout=600)
         self.owner_id = owner_id
         self.parent_interaction = parent_interaction
         self.message: discord.Message | None = None
+        _show_economy(self.economy_button, economy_on)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -210,6 +229,15 @@ class SetupView(discord.ui.View):
     async def set_results(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_select(interaction, ChannelSelect("results_channel", "Results Channel", self))
 
+    @discord.ui.button(label="Cash: On", style=discord.ButtonStyle.success, emoji="💵", row=4)
+    async def economy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_guild_config(str(interaction.guild_id)) or {}
+        enabled = not cfg.get("economy_enabled", True)
+        await db.set_guild_config(str(interaction.guild_id), {"economy_enabled": enabled})
+        _show_economy(button, enabled)
+        embed = await build_status_embed(str(interaction.guild_id))
+        await interaction.response.edit_message(embed=embed, view=self)
+
     # RESET
 
     @discord.ui.button(label="Reset All", style=discord.ButtonStyle.danger, emoji="🗑️", row=4)
@@ -248,8 +276,9 @@ class Setup(commands.Cog):
                 ephemeral=True
             )
 
+        cfg = await db.get_guild_config(str(interaction.guild_id)) or {}
         embed = await build_status_embed(str(interaction.guild_id))
-        view = SetupView(interaction.user.id, interaction)
+        view = SetupView(interaction.user.id, interaction, economy_on=cfg.get("economy_enabled", True))
         await interaction.response.send_message(
             embed=embed,
             view=view,

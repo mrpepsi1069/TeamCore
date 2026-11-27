@@ -204,6 +204,11 @@ def help_embed_v2() -> discord.Embed:
         "/leaderboard teams - Ranked teams (paginated)\n"
         "/leaderboard cash - Richest members across every server\n"
         "/leaderboard post - Live leaderboard that auto-updates (Manager)"), inline=False)
+    e.add_field(name="💵 Cash", value=(
+        "/balance [member] - Check a balance\n"
+        "/daily - Claim today's Cash (a streak bonus grows each day)\n"
+        "/pay member amount - Send Cash to another member\n"
+        "/casino game entry - One round, then Play Again for another at the same entry"), inline=False)
     e.add_field(name="📊 Stats Channels (Admin)", value=(
         "/stats setup - Create member + boost channels\n"
         "/stats add|remove|config|update - Manage stat channels, incl. per-team records"), inline=False)

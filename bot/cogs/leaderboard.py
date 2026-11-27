@@ -106,8 +106,15 @@ class Leaderboard(commands.Cog):
             medal = MEDALS[i] if i < 3 else f"`{i + 1}.`"
             servers = f" · {row['servers']} servers" if row["servers"] > 1 else ""
             lines.append(f"{medal} **{who}** — {format_cash(row['total'])}{servers}")
+        standing = await economy_db.global_ranking(db.handle(), interaction.user.id)
+        if standing["rank"]:
+            where = f"You're #{standing['rank']} of {standing['players']} with {format_cash(standing['total'])}"
+        elif standing["players"]:
+            where = f"You have no Cash yet — {standing['players']} member(s) ranked"
+        else:
+            where = "Nobody has any Cash yet"
         embed = brand("🌍 Global Cash Leaderboard", "\n".join(lines), 0xFFD700)
-        embed.set_footer(text="The richest members across every server TeamCore is in")
+        embed.set_footer(text=f"{where} · richest across every server TeamCore is in")
         await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     async def _awards_board(self, interaction, kind):

@@ -14,13 +14,15 @@ Functions take the database handle (`database.handle()` in the bot, `backend.db.
 website) so both processes can use the same code, like database/teams.py.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from shared.economy import CASINO_GAME_TIMEOUT, STARTING_CASH, check_amount, check_balance, format_cash
+from shared.economy import (
+    CASINO_GAME_TIMEOUT, STARTING_CASH, check_amount, check_balance, daily_reward, format_cash,
+)
 
 ACCOUNTS = "economy_accounts"
 LEDGER = "economy_transactions"
@@ -124,6 +126,53 @@ async def global_leaderboard(dbh, limit: int = 10) -> list:
         {"$limit": int(limit)},
     ]).to_list(None)
     return [{"user_id": r["_id"], "total": int(r["total"]), "servers": int(r["servers"])} for r in rows]
+
+
+async def global_ranking(dbh, user_id) -> dict:
+    """Where one member stands on the global Cash board (rank 1 = richest).
+
+    `rank` is None when they hold no Cash anywhere, and `players` counts everyone who does, so
+    the board can tell any member where they stand instead of only ranking the top ten.
+    """
+    rows = await _c(dbh, ACCOUNTS).aggregate([
+        {"$group": {"_id": "$user_id", "total": {"$sum": "$balance"}}},
+        {"$match": {"total": {"$gt": 0}}},
+        {"$sort": {"total": -1, "_id": 1}},
+    ]).to_list(None)
+    uid = str(user_id)
+    for i, row in enumerate(rows):
+        if row["_id"] == uid:
+            return {"rank": i + 1, "total": int(row["total"]), "players": len(rows)}
+    return {"rank": None, "total": 0, "players": len(rows)}
+
+
+async def claim_daily(dbh, guild_id, user_id, today: date | None = None) -> dict:
+    """Claim today's Cash once, paying more for consecutive days.
+
+    The ledger id includes the UTC date, so a double press, a retry or two bot instances can
+    only ever credit one claim. The streak lives on the account and resets after a missed day.
+    """
+    gid, uid = str(guild_id), str(user_id)
+    today = today or _now().date()
+    day = today.isoformat()
+    account = await ensure_account(dbh, gid, uid)
+    if account.get("daily_day") == day:
+        return {"claimed": False, "amount": 0, "balance": int(account["balance"]),
+                "streak": int(account.get("daily_streak") or 1)}
+    yesterday = (today - timedelta(days=1)).isoformat()
+    streak = int(account.get("daily_streak") or 0) + 1 if account.get("daily_day") == yesterday else 1
+    amount = daily_reward(streak)
+    try:
+        new_balance = await _move(dbh, gid, uid, amount, f"daily:{gid}:{uid}:{day}", "daily", to_id=uid)
+    except DuplicateTransaction:  # another request claimed today between our read and write
+        return {"claimed": False, "amount": 0, "balance": await balance(dbh, gid, uid), "streak": streak}
+    if new_balance is None:  # a credit can't be refused by the balance guard, so this is a real failure
+        raise EconomyError("Could not add your daily Cash — please try again.")
+    await _c(dbh, ACCOUNTS).update_one(
+        {"guild_id": gid, "user_id": uid},
+        {"$set": {"daily_day": day, "daily_streak": streak, "updated_at": _now()}},
+    )
+    return {"claimed": True, "amount": amount, "balance": new_balance, "streak": streak}
 
 
 async def _claim(dbh, txn_id: str, **fields) -> None:

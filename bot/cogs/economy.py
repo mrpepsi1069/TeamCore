@@ -4,13 +4,17 @@ The balance itself always lives in MongoDB (database/economy.py); this cog only 
 input and builds the messages, so a stale number read a moment ago can never be spent twice.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 import database as db
 from database import economy as cash
-from shared.economy import CASINO_GAME_TIMEOUT, CASINO_GAMES, MAX_CASH, format_cash, play
+from shared.economy import (
+    CASINO_GAME_TIMEOUT, CASINO_GAMES, DAILY_MAX_STREAK, MAX_CASH, daily_reward, format_cash, play,
+)
 from utils.embeds import error_embed, info_embed, success_embed
 from utils.permissions import has_owner_perms
 from utils.ui import ack
@@ -21,11 +25,60 @@ GAME_CHOICES = [
 ]
 
 
-def _closed_view() -> discord.ui.View:
-    """The game message after it ended: same button, no longer clickable."""
-    view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="Play", emoji="🎲", style=discord.ButtonStyle.primary, disabled=True))
-    return view
+def _until_utc_midnight() -> str:
+    """How long until the next daily claim unlocks, for the 'already claimed' reply."""
+    now = datetime.now(timezone.utc)
+    left = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now
+    hours, minutes = divmod(int(left.total_seconds()) // 60, 60)
+    return f"{hours}h {minutes}m"
+
+
+def _open_embed(opened: dict) -> discord.Embed:
+    """The message for a game waiting on Play — used by /casino and by Play Again."""
+    spec = CASINO_GAMES[opened["game"]]
+    return discord.Embed(
+        title=f"{spec['emoji']} {spec['label']}",
+        description=(
+            f"Entry: **{format_cash(opened['entry'])}**\n{spec['odds']}\n\n"
+            f"Balance: **{format_cash(opened['balance'])}**\n\n"
+            f"Press **Play** within {CASINO_GAME_TIMEOUT} seconds. If the game expires, your entry is refunded."
+        ),
+        color=0x5865F2,
+    )
+
+
+class ClosedView(discord.ui.View):
+    """A settled game: the outcome, plus one more round for the same player."""
+
+    def __init__(self, cog: "Economy", game: dict, timeout: float = 180):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.game = game
+        self.message: discord.Message | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != str(self.game["user_id"]):
+            await interaction.response.send_message(
+                f"❌ This game belongs to <@{self.game['user_id']}> — run `/casino` to start your own.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Play Again", emoji="🔁", style=discord.ButtonStyle.primary)
+    async def again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await self.cog.replay(interaction, self.game, self.message)
+
+    async def on_timeout(self):
+        # A button that outlives its view would still look pressable, so grey it out.
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 def _result_embed(game: dict, won: bool, reward: int, balance: int) -> discord.Embed:
@@ -70,10 +123,33 @@ class Economy(commands.Cog):
     def cog_unload(self):
         self.expire_due.cancel()
 
+    async def economy_on(self, interaction: discord.Interaction) -> bool:
+        """Whether Cash is enabled in this server (`/setup` and the dashboard toggle it).
+
+        A missing setting means on, and a failed read never blocks play: the toggle is a
+        preference, not a safety control.
+        """
+        try:
+            cfg = await db.get_guild_config(str(interaction.guild_id)) or {}
+        except Exception:
+            return True
+        if cfg.get("economy_enabled", True):
+            return True
+        await interaction.response.send_message(
+            embed=error_embed(
+                "Cash Is Turned Off",
+                "This server turned Cash off. A server admin can turn it back on in `/setup` or in the dashboard's Server settings.",
+            ),
+            ephemeral=True,
+        )
+        return False
+
     @app_commands.command(name="balance", description="Check how much Cash you (or another member) have")
     @app_commands.describe(member="Whose balance to show (default: yours)")
     async def balance(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
+        if not await self.economy_on(interaction):
+            return
         # Acknowledge before touching MongoDB: Discord invalidates an interaction that has not
         # been answered within 3 seconds, and a cold database round-trip can take longer.
         if not await ack(interaction):
@@ -89,6 +165,8 @@ class Economy(commands.Cog):
     @app_commands.describe(member="Who receives the Cash", amount="How much Cash to send")
     async def pay(self, interaction: discord.Interaction, member: discord.Member,
                   amount: app_commands.Range[int, 1, MAX_CASH]):
+        if not await self.economy_on(interaction):
+            return
         # The sender is always the person running the command — never a value the client sends.
         if member.id == interaction.user.id:
             return await interaction.response.send_message(
@@ -115,7 +193,8 @@ class Economy(commands.Cog):
     @app_commands.choices(game=GAME_CHOICES)
     async def casino(self, interaction: discord.Interaction, game: app_commands.Choice[str],
                      entry: app_commands.Range[int, 1, MAX_CASH]):
-        spec = CASINO_GAMES[game.value]
+        if not await self.economy_on(interaction):
+            return
         # The entry is charged before the game message exists, so acknowledge first: if the
         # database is slow and the token expires, the member's Cash is taken and no message
         # ever appears (the expiry sweep refunds it, but nobody should be left waiting on that).
@@ -129,18 +208,41 @@ class Economy(commands.Cog):
         except cash.EconomyError as e:
             return await interaction.followup.send(embed=error_embed("Casino Closed", str(e)), ephemeral=True)
 
-        embed = discord.Embed(
-            title=f"{spec['emoji']} {spec['label']}",
-            description=(
-                f"Entry: **{format_cash(entry)}**\n{spec['odds']}\n\n"
-                f"Balance: **{format_cash(opened['balance'])}**\n\n"
-                f"Press **Play** within {CASINO_GAME_TIMEOUT} seconds. If the game expires, your entry is refunded."
-            ),
-            color=0x5865F2,
-        )
+        embed = _open_embed(opened)
         view = CasinoView(self, opened)
         await interaction.edit_original_response(embed=embed, view=view)
         view.message = await interaction.original_response()
+
+    @app_commands.command(name="daily", description="Claim your daily Cash — consecutive days pay more")
+    async def daily(self, interaction: discord.Interaction):
+        if not await self.economy_on(interaction):
+            return
+        if not await ack(interaction):
+            return
+        try:
+            result = await cash.claim_daily(db.handle(), interaction.guild_id, interaction.user.id)
+        except cash.EconomyError as e:
+            return await interaction.followup.send(embed=error_embed("Daily Cash Unavailable", str(e)), ephemeral=True)
+        if not result["claimed"]:
+            return await interaction.followup.send(
+                embed=info_embed(
+                    "Already Claimed",
+                    f"Your next daily Cash unlocks in **{_until_utc_midnight()}** (midnight UTC).\n"
+                    f"Your streak is **{result['streak']} day(s)** — keep it going.",
+                ),
+                ephemeral=True,
+            )
+        streak = result["streak"]
+        embed = success_embed(
+            "💵 Daily Cash",
+            f"You claimed **{format_cash(result['amount'])}** — day **{streak}** of your streak.\n"
+            f"**Final balance: {format_cash(result['balance'])}**",
+        )
+        embed.set_footer(
+            text=(f"Tomorrow pays {format_cash(daily_reward(streak + 1))}." if streak < DAILY_MAX_STREAK
+                  else f"Day {DAILY_MAX_STREAK} is the top streak — {format_cash(daily_reward(DAILY_MAX_STREAK))} every day.")
+        )
+        await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     async def settle(self, interaction: discord.Interaction, game: dict, message: discord.Message | None):
         if not await ack(interaction):
@@ -158,12 +260,15 @@ class Economy(commands.Cog):
             )
         game["detail"] = outcome["detail"]
         embed = _result_embed(game, outcome["won"], int(outcome["reward"]), result["balance"])
+        view = ClosedView(self, game)
         if message is None:
-            return await interaction.followup.send(embed=embed)
+            view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            return
         try:
-            await message.edit(embed=embed, view=_closed_view())
+            await message.edit(embed=embed, view=view)
+            view.message = message
         except discord.HTTPException:
-            await interaction.followup.send(embed=embed)
+            view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
 
     async def expire(self, game: dict, message: discord.Message | None):
         """The Play button was never pressed: refund exactly once and close the message."""
@@ -174,6 +279,7 @@ class Economy(commands.Cog):
             return
         if result is None or message is None:
             return
+        view = ClosedView(self, game)
         try:
             await message.edit(
                 embed=info_embed(
@@ -181,10 +287,35 @@ class Economy(commands.Cog):
                     f"No result was played, so your {format_cash(game['entry'])} entry was refunded.\n"
                     f"**Final balance: {format_cash(result['balance'])}**",
                 ),
-                view=_closed_view(),
+                view=view,
             )
+            view.message = message
         except discord.HTTPException:
             pass
+
+    async def replay(self, interaction: discord.Interaction, game: dict, message: discord.Message | None):
+        """Play Again: a fresh round of the same game at the same entry, charged like any other."""
+        if not await self.economy_on(interaction):
+            return
+        if not await ack(interaction):
+            return
+        try:
+            opened = await cash.open_game(db.handle(), interaction.guild_id, interaction.user.id,
+                                          game["game"], int(game["entry"]))
+        except cash.InsufficientCash as e:
+            return await interaction.followup.send(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
+        except cash.EconomyError as e:
+            return await interaction.followup.send(embed=error_embed("Casino Closed", str(e)), ephemeral=True)
+        embed = _open_embed(opened)
+        view = CasinoView(self, opened)
+        if message is None:
+            view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            return
+        try:
+            await message.edit(embed=embed, view=view)
+            view.message = message
+        except discord.HTTPException:
+            view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
 
     # ── owner tools ──────────────────────────────────────────────────────
     # Direct balance edits are bot-owner only, answered privately (ephemeral), and still go
@@ -199,6 +330,8 @@ class Economy(commands.Cog):
         return False
 
     async def _single(self, interaction: discord.Interaction, member: discord.User, amount: int, mode: str):
+        if not await self.economy_on(interaction):
+            return
         if not await self._owner_only(interaction):
             return
         if not await ack(interaction, ephemeral=True):
@@ -222,6 +355,8 @@ class Economy(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     async def _many(self, interaction: discord.Interaction, amount: int, mode: str):
+        if not await self.economy_on(interaction):
+            return
         if not await self._owner_only(interaction):
             return
         ids = [str(m.id) for m in interaction.guild.members if not m.bot]

@@ -50,6 +50,7 @@ Slash commands are synced automatically on startup. `bot.py` is the single entry
 | `/premium` | View premium pricing | Everyone |
 | `/balance [member]` | Show Cash (yours or another member's) | Everyone |
 | `/pay <member> <amount>` | Send Cash to another member | Everyone |
+| `/daily` | Claim your daily Cash (a streak bonus grows for consecutive days) | Everyone |
 | `/casino <game> <entry>` | Play Coin Flip, Dice, Slots, Wheel, High Card or Lucky Sevens | Everyone |
 | `/cash add\|remove\|set <member> <amount>` | Add, remove or set one member's Cash | Bot owner |
 | `/cash add-all\|remove-all\|set-all <amount>` | The same for every member in the server | Bot owner |
@@ -106,17 +107,29 @@ shown the same way everywhere: `$1,000 Cash` (`/balance`, `/pay`, casino results
 * `/pay <member> <amount>` — sends Cash. You can send your whole balance, but not more; zero,
   negative, self- and bot-payments are refused. Success reads `Successfully sent $400 Cash.` and
   shows both updated balances.
+* `/daily` — claims today's Cash once: `$500` on the first day, `+$100` for each consecutive day up
+  to `$1,100` from day 7. Missing a day resets the streak to day 1. The claim is keyed by the UTC
+  date, so a double press can only ever pay once, and the result ends with the **Final balance**.
 * `/casino <game> <entry>` — Coin Flip (50%, pays 1.9×), Dice (roll 5–6, pays 2.75×), Slots
   (three of a kind, pays 8×), Wheel (💎, 1 in 5, pays 4.5×), High Card (J/Q/K/A, pays 2.9×) or
   Lucky Sevens (two dice total 7, pays 5.25×). The entry is taken when the game opens, the **Play**
   button settles it exactly once (a win credits the configured reward, a loss pays nothing back, and
-  every result ends with the member's **Final balance**), and
-  a game nobody plays expires after 90 seconds with its entry refunded — including after a bot
-  restart, because a sweep refunds any expired game.
+  every result ends with the member's **Final balance**), and a game nobody plays expires after 90
+  seconds with its entry refunded — including after a bot restart, because a sweep refunds any
+  expired game. The result also keeps a **Play Again** button that opens another round of the same
+  game at the same entry, so a player never has to retype the command.
 
 `/leaderboard cash` is the one global board: Cash is stored per server, so it adds each member's
 balances across every server the bot is in and says in how many of them they hold Cash. Names come
-from the bot's known users, with a mention as the fallback.
+from the bot's known users, with a mention as the fallback. Its footer tells whoever ran it where
+they stand (`You're #47 of 812 with $1,200 Cash`), so the board is useful outside the top ten.
+
+**Turning Cash off.** A server owner can switch the economy off from `/setup` (the **Cash: On/Off**
+button) and admins from the dashboard's Server settings. While it is off, `/balance`, `/pay`,
+`/daily`, `/casino` and the owner tools answer privately that Cash is disabled, and Play Again is
+refused; a game that was already open can still be settled or refunded, because that Cash left the
+balance before the switch. A setting that has never been touched counts as on, and a failed read
+never blocks play.
 
 **Bot-owner tools.** `/cash add`, `/cash remove` and `/cash set` change one member's Cash, and
 `/cash add-all`, `/cash remove-all` and `/cash set-all` do the same for every non-bot member in the
