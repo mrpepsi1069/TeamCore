@@ -77,12 +77,15 @@ class Economy(commands.Cog):
     @app_commands.describe(member="Whose balance to show (default: yours)")
     async def balance(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
+        # Acknowledge before touching MongoDB: Discord invalidates an interaction that has not
+        # been answered within 3 seconds, and a cold database round-trip can take longer.
+        await interaction.response.defer()
         try:
             held = await cash.balance(db.handle(), interaction.guild_id, target.id)
         except cash.EconomyError as e:
-            return await interaction.response.send_message(embed=error_embed("Cash Unavailable", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Cash Unavailable", str(e)), ephemeral=True)
         embed = info_embed("💵 Cash", f"{target.mention} has **{format_cash(held)}**")
-        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="pay", description="Send Cash to another member")
     @app_commands.describe(member="Who receives the Cash", amount="How much Cash to send")
@@ -95,17 +98,18 @@ class Economy(commands.Cog):
         if member.bot:
             return await interaction.response.send_message(
                 embed=error_embed("Bots Can't Be Paid", "Cash can only be sent to members."), ephemeral=True)
+        await interaction.response.defer()  # two accounts + a ledger write can outlast the 3-second window
         try:
             result = await cash.transfer(db.handle(), interaction.guild_id, interaction.user.id,
                                          member.id, amount, interaction.id)
         except cash.InsufficientCash as e:
-            return await interaction.response.send_message(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
         except cash.EconomyError as e:
-            return await interaction.response.send_message(embed=error_embed("Payment Failed", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Payment Failed", str(e)), ephemeral=True)
         embed = success_embed("Cash Sent", f"Successfully sent {format_cash(result['amount'])}.")
         embed.add_field(name="From", value=f"{interaction.user.display_name} — {format_cash(result['sender_balance'])}", inline=True)
         embed.add_field(name="To", value=f"{member.display_name} — {format_cash(result['recipient_balance'])}", inline=True)
-        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="casino", description="Play a casino game with Cash")
     @app_commands.describe(game="Which game to play", entry="How much Cash to put in")
@@ -113,13 +117,17 @@ class Economy(commands.Cog):
     async def casino(self, interaction: discord.Interaction, game: app_commands.Choice[str],
                      entry: app_commands.Range[int, 1, MAX_CASH]):
         spec = CASINO_GAMES[game.value]
+        # The entry is charged before the game message exists, so acknowledge first: if the
+        # database is slow and the token expires, the member's Cash is taken and no message
+        # ever appears (the expiry sweep refunds it, but nobody should be left waiting on that).
+        await interaction.response.defer()
         try:
             opened = await cash.open_game(db.handle(), interaction.guild_id, interaction.user.id,
                                           game.value, entry)
         except cash.InsufficientCash as e:
-            return await interaction.response.send_message(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
         except cash.EconomyError as e:
-            return await interaction.response.send_message(embed=error_embed("Casino Closed", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Casino Closed", str(e)), ephemeral=True)
 
         embed = discord.Embed(
             title=f"{spec['emoji']} {spec['label']}",
@@ -131,7 +139,7 @@ class Economy(commands.Cog):
             color=0x5865F2,
         )
         view = CasinoView(self, opened)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.edit_original_response(embed=embed, view=view)
         view.message = await interaction.original_response()
 
     async def settle(self, interaction: discord.Interaction, game: dict, message: discord.Message | None):
@@ -192,13 +200,14 @@ class Economy(commands.Cog):
     async def _single(self, interaction: discord.Interaction, member: discord.User, amount: int, mode: str):
         if not await self._owner_only(interaction):
             return
+        await interaction.response.defer(ephemeral=True)
         try:
             result = await cash.admin_adjust(db.handle(), interaction.guild_id, member.id, mode, amount,
                                              interaction.user.id)
         except cash.InsufficientCash as e:
-            return await interaction.response.send_message(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("Not Enough Cash", str(e)), ephemeral=True)
         except cash.EconomyError as e:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 embed=error_embed("Cash Update Failed", f"{e}\nCheck `/balance` — it always shows the stored balance."),
                 ephemeral=True,
             )
@@ -208,7 +217,7 @@ class Economy(commands.Cog):
             "set": f"Replaced {member.mention}'s balance.",
         }[mode]
         embed = success_embed("Cash Updated", f"{detail}\nBalance: **{format_cash(result['balance'])}**")
-        await interaction.response.send_message(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.followup.send(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     async def _many(self, interaction: discord.Interaction, amount: int, mode: str):
         if not await self._owner_only(interaction):

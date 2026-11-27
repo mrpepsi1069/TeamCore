@@ -4,6 +4,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import database as db
+from database import economy as economy_db
+from shared.economy import format_cash
 from utils.embeds import error_embed, success_embed
 from utils.permissions import has_manager_perms
 from utils.records import (
@@ -81,6 +83,31 @@ class Leaderboard(commands.Cog):
     @group.command(name="awards", description="Most individual awards")
     async def awards(self, interaction: discord.Interaction):
         await self._awards_board(interaction, "awards")
+
+    @group.command(name="cash", description="Richest members across every server the bot is in")
+    async def cash(self, interaction: discord.Interaction):
+        # Cash is per server, so this is the only board that adds balances up across servers.
+        # It scans every account, so acknowledge before the aggregation outlasts Discord's window.
+        await interaction.response.defer()
+        rows = await economy_db.global_leaderboard(db.handle(), limit=10)
+        if not rows:
+            return await interaction.followup.send(
+                embed=error_embed("No Cash Yet", "Nobody in any server has any Cash yet."), ephemeral=True)
+        names = {
+            u["user_id"]: u.get("username")
+            for u in await db.col("users").find(
+                {"user_id": {"$in": [r["user_id"] for r in rows]}}, {"username": 1}
+            ).to_list(None)
+        }
+        lines = []
+        for i, row in enumerate(rows):
+            who = names.get(row["user_id"]) or f"<@{row['user_id']}>"
+            medal = MEDALS[i] if i < 3 else f"`{i + 1}.`"
+            servers = f" · {row['servers']} servers" if row["servers"] > 1 else ""
+            lines.append(f"{medal} **{who}** — {format_cash(row['total'])}{servers}")
+        embed = brand("🌍 Global Cash Leaderboard", "\n".join(lines), 0xFFD700)
+        embed.set_footer(text="The richest members across every server TeamCore is in")
+        await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     async def _awards_board(self, interaction, kind):
         rows = await db.get_leaderboard(str(interaction.guild_id), kind, limit=10)

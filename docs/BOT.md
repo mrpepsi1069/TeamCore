@@ -113,6 +113,10 @@ shown the same way everywhere: `$1,000 Cash` (`/balance`, `/pay`, casino results
   a game nobody plays expires after 90 seconds with its entry refunded — including after a bot
   restart, because a sweep refunds any expired game.
 
+`/leaderboard cash` is the one global board: Cash is stored per server, so it adds each member's
+balances across every server the bot is in and says in how many of them they hold Cash. Names come
+from the bot's known users, with a mention as the fallback.
+
 **Bot-owner tools.** `/cash add`, `/cash remove` and `/cash set` change one member's Cash, and
 `/cash add-all`, `/cash remove-all` and `/cash set-all` do the same for every non-bot member in the
 server. They are limited to the owner's ID (`BOT_OWNER_ID` or `OWNER_ID` in the bot's `.env`) and
@@ -163,6 +167,7 @@ countdowns are re-checked from the database every 20 seconds, and their buttons 
 | `/record create/delete/edit/rename/reset/win/loss/tie` | Multi-team records (competitions, logos, history) | Manager |
 | `/record view/list/history` | View records | Everyone |
 | `/leaderboard teams/rings/awards` | Paginated rankings | Everyone |
+| `/leaderboard cash` | The richest members across every server the bot is in | Everyone |
 | `/leaderboard post` | Live leaderboard that edits itself when records change | Manager |
 | `/stats setup/add/remove/config/update` | Auto-updating, non-joinable stat voice channels (members, boosts, team records, custom) | Admin |
 | `/lock`, `/unlock` | Lock a channel (or `server_wide`); the original @everyone overwrite is restored exactly | Manage Channels / Manager |

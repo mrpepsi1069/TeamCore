@@ -107,6 +107,25 @@ async def balances(dbh, guild_id, user_ids) -> dict:
     return {r["user_id"]: int(r.get("balance") or 0) for r in rows}
 
 
+async def global_leaderboard(dbh, limit: int = 10) -> list:
+    """The richest members across every server the bot is in.
+
+    Cash is stored per server, so a member's global total is the sum of their balances;
+    `servers` says in how many of them they actually hold Cash.
+    """
+    rows = await _c(dbh, ACCOUNTS).aggregate([
+        {"$group": {
+            "_id": "$user_id",
+            "total": {"$sum": "$balance"},
+            "servers": {"$sum": {"$cond": [{"$gt": ["$balance", 0]}, 1, 0]}},
+        }},
+        {"$match": {"total": {"$gt": 0}}},
+        {"$sort": {"total": -1, "_id": 1}},
+        {"$limit": int(limit)},
+    ]).to_list(None)
+    return [{"user_id": r["_id"], "total": int(r["total"]), "servers": int(r["servers"])} for r in rows]
+
+
 async def _claim(dbh, txn_id: str, **fields) -> None:
     """Reserve a transaction id before any Cash moves. Raises DuplicateTransaction if taken."""
     doc = {"_id": txn_id, "txn_id": txn_id, "status": "pending", "created_at": _now(), **fields}
