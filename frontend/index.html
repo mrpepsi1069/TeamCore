@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TeamCore — Discord bot for leagues and teams</title>
-  <meta name="description" content="TeamCore runs leagues, teams, rosters, schedules and moderation for competitive Discord communities." />
+  <title>TeamCore — the Discord bot for your team's server</title>
+  <meta name="description" content="TeamCore keeps a competitive team's Discord server in order: rosters, depth charts, lineups, availability polls, contracts and awards, with a dashboard." />
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -82,6 +82,8 @@
     .btn.solid { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
     .btn.solid:hover { background: #ff8b39; }
     .hero-note { margin-top: 16px; color: #666a71; font-size: 12px; }
+    .hero-cmds { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; font-family: var(--mono); font-size: 12.5px; color: var(--text-2); }
+    .hero-cmds span { white-space: nowrap; }
 
     .stats-strip {
       max-width: 1120px; margin: 56px auto 0; padding: 0 40px;
@@ -187,8 +189,8 @@
 
 <header class="hero">
   <div class="status"><span class="status-dot"></span><span id="status-text">Checking status…</span></div>
-  <h1>Run your league<br>from one <em>console</em>.</h1>
-  <p class="lead">TeamCore handles leagues, teams, rosters, schedules, contracts, awards and moderation — in Discord and on the web, backed by the same records.</p>
+  <h1>Run your team<br>from one <em>console</em>.</h1>
+  <p class="lead">TeamCore keeps a competitive team's server in order — rosters, depth charts, lineups, availability polls and contracts — in Discord and on the web, backed by the same records.</p>
   <div class="hero-actions">
     <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=1099784744055&scope=bot%20applications.commands" class="btn solid">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
@@ -197,6 +199,7 @@
     <a href="dashboard/" class="btn">Open the dashboard</a>
     <a href="https://discord.gg/BkFJuu7DbN" class="btn">Support server</a>
   </div>
+  <p class="hero-cmds"><span>/depthchart</span><span>/lineup</span><span>/gametime</span><span>/contract</span><span>/roster</span><span>/activitycheck</span></p>
   <p class="hero-note">Free to use. No card, no trial, no locked features.</p>
 </header>
 
@@ -208,26 +211,28 @@
 
 <section class="section" id="features">
   <span class="section-tag">What it does</span>
-  <h2 class="section-title">Built for people who run leagues</h2>
-  <p class="section-sub">Every feature writes to the same database the dashboard reads, so a record changed in Discord is the record on the website.</p>
+  <h2 class="section-title">Built for the people who run the team</h2>
+  <p class="section-sub">The week-to-week work of a competitive roster — who plays, who's available, who's signed — without a spreadsheet. Every feature writes to the same database the dashboard reads.</p>
   <div class="features-grid">
-    <div class="feature-card"><div class="feat-index">01</div><div class="feat-title">Game scheduling</div><div class="feat-desc">Post game-time polls with several slots. Players tap availability and the results update live.</div></div>
-    <div class="feature-card"><div class="feat-index">02</div><div class="feat-title">Lineups</div><div class="feat-desc">Build, edit and post team lineups with positions, then publish a formatted lineup to any channel.</div></div>
-    <div class="feature-card"><div class="feat-index">03</div><div class="feat-title">Depth charts</div><div class="feat-desc">Keep a full depth chart per team with promote and demote controls, stacked by position.</div></div>
-    <div class="feature-card"><div class="feat-index">04</div><div class="feat-title">Contracts</div><div class="feat-desc">Track player contracts, mark them paid, and post every active deal as one clean embed.</div></div>
-    <div class="feature-card"><div class="feat-index">05</div><div class="feat-title">Awards &amp; rings</div><div class="feat-desc">Hand out awards and championship rings; players check their own with a single command.</div></div>
-    <div class="feature-card"><div class="feat-index">06</div><div class="feat-title">Leagues &amp; signups</div><div class="feat-desc">Create leagues with signup buttons that assign the league role automatically, and see them in the console.</div></div>
-    <div class="feature-card"><div class="feat-index">07</div><div class="feat-title">Team broadcasts</div><div class="feat-desc">DM everyone holding a role in one pass, so the whole roster hears it at the same time.</div></div>
-    <div class="feature-card"><div class="feat-index">08</div><div class="feat-title">Moderation</div><div class="feat-desc">Kick, ban, timeout and mute with full role-hierarchy checks — nobody moderates above their rank.</div></div>
-    <div class="feature-card"><div class="feat-index">09</div><div class="feat-title">Server setup</div><div class="feat-desc">Map channels and roles to permission tiers once, and the bot fits the server you already have.</div></div>
+    <div class="feature-card"><div class="feat-index">01</div><div class="feat-title">Availability polls</div><div class="feat-desc">Post one poll for game time or several time slots. Players tap what they can make and the results update live.</div></div>
+    <div class="feature-card"><div class="feat-index">02</div><div class="feat-title">Depth charts</div><div class="feat-desc">A full chart per team, stacked by position, with promote and demote when someone earns the starting job.</div></div>
+    <div class="feature-card"><div class="feat-index">03</div><div class="feat-title">Lineups</div><div class="feat-desc">Build and edit the week's lineup with positions, then post a formatted lineup straight to the channel.</div></div>
+    <div class="feature-card"><div class="feat-index">04</div><div class="feat-title">Rosters</div><div class="feat-desc">Track who is on the team, at what position and in what jersey; ask which teams any player is on.</div></div>
+    <div class="feature-card"><div class="feat-index">05</div><div class="feat-title">Contracts</div><div class="feat-desc">Track player contracts, mark them paid, and post every active deal as one clean embed.</div></div>
+    <div class="feature-card"><div class="feat-index">06</div><div class="feat-title">Activity checks &amp; broadcasts</div><div class="feat-desc">Run an activity check to see who's still around, and DM everyone holding a role in one pass.</div></div>
+    <div class="feature-card"><div class="feat-index">07</div><div class="feat-title">Records &amp; stat channels</div><div class="feat-desc">Log results and keep a win/loss record that updates itself in a voice channel — visible proof for recruits.</div></div>
+    <div class="feature-card"><div class="feat-index">08</div><div class="feat-title">Awards &amp; rings</div><div class="feat-desc">Hand out awards and championship rings; players check their own with a single command.</div></div>
+    <div class="feature-card"><div class="feat-index">09</div><div class="feat-title">Leagues &amp; signups</div><div class="feat-desc">When your team plays in a league, create it with signup buttons that assign the role automatically and see it in the console.</div></div>
+    <div class="feature-card"><div class="feat-index">10</div><div class="feat-title">Moderation</div><div class="feat-desc">Kick, ban, timeout and mute with full role-hierarchy checks — nobody moderates above their rank.</div></div>
+    <div class="feature-card"><div class="feat-index">11</div><div class="feat-title">Server setup</div><div class="feat-desc">Map channels and roles to permission tiers once, and the bot fits the server you already have.</div></div>
   </div>
 </section>
 
 <section class="servers-section">
   <div class="section">
     <span class="section-tag">Community</span>
-    <h2 class="section-title">Leagues already running here</h2>
-    <p class="section-sub">A sample of the communities using TeamCore today.</p>
+    <h2 class="section-title">Teams already running here</h2>
+    <p class="section-sub">A sample of the team servers using TeamCore today.</p>
     <div id="servers-container"><div class="no-data">Loading servers…</div></div>
   </div>
 </section>
@@ -317,15 +322,15 @@
 
 <div class="cta-banner">
   <div>
-    <h2>Ready to run your league?</h2>
-    <p>Add TeamCore to your server in a couple of minutes, then open the dashboard.</p>
+    <h2>Ready to run your team?</h2>
+    <p>Add TeamCore, run <code>/setup</code>, and post your first depth chart in a couple of minutes.</p>
   </div>
   <a href="https://discord.com/api/oauth2/authorize?client_id=1446687675330330826&permissions=1099784744055&scope=bot%20applications.commands" class="btn solid">Add to Discord</a>
 </div>
 
 <footer>
   <div class="wordmark"><i>TC</i>TeamCore</div>
-  <span>© 2026 TeamCore · Built for leagues</span>
+  <span>© 2026 TeamCore · Built for teams</span>
   <span class="spacer"></span>
   <a href="dashboard/" style="color: var(--text-2)">Dashboard</a>
 </footer>

@@ -1,6 +1,8 @@
 # 🏈 TeamCore Bot — discord.py Edition
 
-A Discord bot for league teams, built in Python using `discord.py`.
+A Discord bot for one competitive team's Discord server, built in Python using `discord.py`.
+
+The team is the unit: the server is where the roster actually lives between matches. TeamCore keeps that week-to-week work in one place — rosters, depth charts, lineups, availability polls, contracts, activity checks, records, awards and rings — and writes it to the same database the dashboard reads. League tools (`/league`, competitions, multi-team records) exist because the team plays in a league; they are not the point of the bot.
 
 ## Setup
 
