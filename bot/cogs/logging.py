@@ -3,27 +3,19 @@
 import traceback
 import discord
 from discord.ext import commands
-from config import LOG_GUILD_ID
-
-CHANNEL_GUILD_JOINS  = "guild-joins"
-CHANNEL_GUILD_LEAVES = "guild-leaves"
-CHANNEL_BOT_ERRORS   = "bot-errors"
+from config import LOG_ERRORS_CHANNEL_ID, LOG_JOINS_CHANNEL_ID, LOG_LEAVES_CHANNEL_ID
 
 
-async def _get_log_channel(bot: commands.Bot, name: str) -> discord.TextChannel | None:
-    guild = bot.get_guild(LOG_GUILD_ID)
-    if guild is None:
+async def _get_log_channel(bot: commands.Bot, channel_id: int):
+    """The log channels are fixed by ID (config.py), so renaming them doesn't break logging,
+    and the bot never creates a stray channel. Returns None when the channel is unreachable."""
+    channel = bot.get_channel(channel_id) or bot.get_channel(str(channel_id))
+    if channel is not None:
+        return channel
+    try:
+        return await bot.fetch_channel(channel_id)
+    except Exception:
         return None
-    channel = discord.utils.get(guild.text_channels, name=name)
-    if channel is None:
-        try:
-            channel = await guild.create_text_channel(
-                name=name,
-                reason="TeamCore logging system"
-            )
-        except Exception:
-            return None
-    return channel
 
 
 _invite_cache: dict[int, str] = {}
@@ -66,21 +58,12 @@ class Logging(commands.Cog):
         self.bot = bot
 
     # ──────────────────────────────────────────────
-    # Create channels on startup
-    # ──────────────────────────────────────────────
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        for name in [CHANNEL_GUILD_JOINS, CHANNEL_GUILD_LEAVES, CHANNEL_BOT_ERRORS]:
-            await _get_log_channel(self.bot, name)
-
-    # ──────────────────────────────────────────────
     # Guild Join
     # ──────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
-        channel = await _get_log_channel(self.bot, CHANNEL_GUILD_JOINS)
+        channel = await _get_log_channel(self.bot, LOG_JOINS_CHANNEL_ID)
         if channel is None:
             return
 
@@ -106,7 +89,7 @@ class Logging(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
-        channel = await _get_log_channel(self.bot, CHANNEL_GUILD_LEAVES)
+        channel = await _get_log_channel(self.bot, LOG_LEAVES_CHANNEL_ID)
         if channel is None:
             return
 
@@ -132,7 +115,7 @@ class Logging(commands.Cog):
         """Private admin logging only. bot.py's @bot.tree.error handler owns the
         user-facing reply and re-dispatches here via bot.dispatch(), since
         discord.py's app_commands errors don't reach cog listeners on their own."""
-        channel = await _get_log_channel(self.bot, CHANNEL_BOT_ERRORS)
+        channel = await _get_log_channel(self.bot, LOG_ERRORS_CHANNEL_ID)
         error = getattr(error, "original", error)  # unwrap CommandInvokeError so the real traceback is logged
 
         guild_name = interaction.guild.name if interaction.guild else "DM"

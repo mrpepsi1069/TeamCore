@@ -18,8 +18,13 @@ def _int_env(name: str, default: int) -> int:
 # Override any of these with an environment variable; defaults keep the old behaviour.
 OWNER_ID              = _int_env("BOT_OWNER_ID",         1314823988253560852)
 SUGGESTION_CHANNEL_ID = _int_env("SUGGESTION_CHANNEL_ID", 1466284506385219686)
-LOG_GUILD_ID          = _int_env("LOG_GUILD_ID",          1447457533135425539)
+LOG_GUILD_ID          = _int_env("LOG_GUILD_ID",          1575685125516296194)
 TEMPLATE_GUILD_ID     = _int_env("TEMPLATE_GUILD_ID",     1487243792917463072)
+
+# Private logging channels, addressed by ID so renaming them in Discord keeps them working.
+LOG_JOINS_CHANNEL_ID  = _int_env("LOG_JOINS_CHANNEL_ID",  1575685127361527958)
+LOG_LEAVES_CHANNEL_ID = _int_env("LOG_LEAVES_CHANNEL_ID", 1575685127361527959)
+LOG_ERRORS_CHANNEL_ID = _int_env("LOG_ERRORS_CHANNEL_ID", 1575685127361527960)
 
 SUPPORT_SERVER_URL = os.getenv("SUPPORT_SERVER_URL", "https://discord.gg/3cWdPsCPC8")
 
