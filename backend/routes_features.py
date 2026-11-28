@@ -18,7 +18,7 @@ from database import teams as T
 from backend.db import db as handle
 from backend.resources import bump_team, channel_ok, finish, notify_records, post_result, role_ok
 from backend.util import now, oid, ser
-from shared.fusion import SPORTS, parse_report
+from shared.fusion import SPORTS, match_period, parse_report, split_period
 
 router = APIRouter(prefix="/api/guilds/{gid}", tags=["features"])
 
@@ -317,6 +317,7 @@ async def attach_stats(rid: str, body: dict = Body(...), ctx: Ctx = Depends(guil
     home_display = names.get(doc.get("home_team_id")) or mine["name"]
     away_display = names.get(doc.get("away_team_id")) or doc.get("away_name") or theirs["name"]
     game["score"] = {"home": home_display, "home_score": hs, "away": away_display, "away_score": as_}
+    game.update(_period_fields(body))
     change = {"ff": game}
     note = ""
     if (doc.get("home_score"), doc.get("away_score")) != (hs, as_):
@@ -381,6 +382,7 @@ async def import_match(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
         game = {"sport": sport, "score": {"home": home["name"], "home_score": hs,
                                           "away": away["name"] if away else away_name, "away_score": as_}}
 
+    game.update(_period_fields(body))  # the short export has no game title, so the dialog supplies its season and week
     try:
         doc, updated = await T.log_match(handle(), ctx.guild_id, home, away, hs, as_, competition,
                                          picked, "", bool(body.get("apply_record")), ctx.user["user_id"], away_name=away_name, ff=game)
@@ -408,7 +410,11 @@ async def ff_preview(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
     teams = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
     res = _ff_sides(game, teams, str(body.get("my_team") or ""), bool(body.get("flip")))
     home = res["home"]
+    # What to prefill the season/week boxes with when the report has no title of its own.
+    recent = await coll("matches").find({"guild_id": ctx.guild_id, "ff": {"$type": "object"}}).sort("played_at", -1).limit(20).to_list(None)
+    last = next(((s, w) for s, w in (match_period(m.get("ff")) for m in recent) if s and w), (None, None))
     return {"game": game.get("game"), "competition": home.get("competition"),
+            "last_season": last[0], "last_week": last[1],
             "home": home["name"], "home_team_id": home["team_id"],
             "away": res["away"]["name"] if res["away"] else res["away_name"],
             "home_score": res["hs"], "away_score": res["as"],
@@ -417,19 +423,60 @@ async def ff_preview(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
             "sides_confirmed": (game["score"].get("sides") or "report") != "unconfirmed"}
 
 
+def _int_param(value: str) -> int | None:
+    """A query-string period ("2"), or None for “all"."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_fields(body: dict) -> dict:
+    """The season/week the import dialog typed for a report whose own title names no period (the short export)."""
+    out = {}
+    for key, label in (("season", "Season"), ("week", "Week")):
+        raw = body.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(422, {"errors": {key: f"{label} must be a whole number."}})
+        if not 1 <= value <= 99:
+            raise HTTPException(422, {"errors": {key: f"{label} goes from 1 to 99."}})
+        out[key] = value
+    return out
+
+
 @router.get("/ff")
-async def ff_stats(stat: str = "", competition: str = "", ctx: Ctx = Depends(guild_ctx)):
-    """Football Fusion only: per-player stat totals from parsed game reports, plus the recent FF games."""
+async def ff_stats(stat: str = "", competition: str = "", season: str = "", week: str = "", team: str = "",
+                   ctx: Ctx = Depends(guild_ctx)):
+    """Football Fusion only: per-player stat totals from parsed game reports, sliceable by season, week and team.
+
+    A report's own title line carries the period (“PFG || S2 Week 2”). It is read here rather than stored when the
+    match was imported, so reports imported before these filters existed slice exactly like new ones."""
     q = {"guild_id": ctx.guild_id, "ff": {"$type": "object"},
          "$or": [{"ff.sport": {"$exists": False}}, {"ff.sport": "ff"}]}
     if competition:
         q["competition"] = {"$regex": f"^{re.escape(competition)}$", "$options": "i"}  # matches store no lowercase copy
     matches = await coll("matches").find(q).sort("played_at", -1).limit(500).to_list(None)
-    teams = {t["team_id"]: t.get("name") for t in await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)}
+    team_docs = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
+    teams = {t["team_id"]: t.get("name") for t in team_docs}
     roster: dict = {}
     for m in await coll("team_members").find({"guild_id": ctx.guild_id}).to_list(None):
         if str(m.get("user_id") or "") not in roster:
             roster[str(m.get("user_id"))] = teams.get(m.get("team_id"))
+
+    periods = {str(m["_id"]): match_period(m.get("ff")) for m in matches}
+    want_season, want_week = _int_param(season), _int_param(week)
+    seasons = sorted({s for s, _ in periods.values() if s is not None})
+    if want_season is None and want_week is not None and seasons:
+        want_season = seasons[-1]  # a week number only means something inside a season — read it in the latest one
+    weeks = sorted({w for s, w in periods.values() if w is not None and (want_season is None or s == want_season)})
+    if want_season is not None:
+        matches = [m for m in matches if periods[str(m["_id"])][0] == want_season]
+    if want_week is not None:
+        matches = [m for m in matches if periods[str(m["_id"])][1] == want_week]
 
     rows: dict = {}
     seen: dict = {}
@@ -439,6 +486,10 @@ async def ff_stats(stat: str = "", competition: str = "", ctx: Ctx = Depends(gui
             if not name:
                 continue
             who = str(p.get("user_id")) if p.get("user_id") else "name:" + name.lower()
+            # The JSON export names a team per player; a text report doesn't, so the dashboard roster fills in.
+            reported = str(p.get("team") or "").strip()
+            known = _report_team(reported, team_docs) if reported else None
+            row_team = roster.get(who) or (known or {}).get("name") or reported or None
             positions = p.get("positions") or {}
             if not positions and isinstance(p.get("stats"), dict):
                 positions = {"—": p["stats"]}
@@ -446,15 +497,21 @@ async def ff_stats(stat: str = "", competition: str = "", ctx: Ctx = Depends(gui
                 if not isinstance(stats, dict):
                     continue
                 row = rows.setdefault((who, pos), {"name": name, "user_id": p.get("user_id"), "position": pos,
-                                                   "team": roster.get(who), "games": set(), "totals": {}})
+                                                   "team": row_team, "games": set(), "totals": {}})
                 row["games"].add(str(match["_id"]))
                 for k, v in stats.items():
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         row["totals"][k] = row["totals"].get(k, 0) + v
                         seen[k] = seen.get(k, 0) + 1
 
+    kept = list(rows.values())
+    team_names = sorted({r["team"] for r in kept if r["team"]}, key=str.lower)
+    if team:
+        wanted = team.strip().lower()
+        kept = [r for r in kept if (r["team"] or "").lower() == wanted]
+
     players = []
-    for row in rows.values():
+    for row in kept:
         gp = len(row["games"])
         players.append({"name": row["name"], "user_id": row["user_id"], "position": row["position"], "team": row["team"],
                         "games": gp, "totals": row["totals"],
@@ -468,11 +525,14 @@ async def ff_stats(stat: str = "", competition: str = "", ctx: Ctx = Depends(gui
     for m in matches[:20]:
         ff = m.get("ff") or {}
         side = ff.get("score") or {}
+        period = periods[str(m["_id"])]
         games.append({"id": str(m["_id"]), "played_at": m.get("played_at"), "competition": m.get("competition"),
+                      "season": period[0], "week": period[1],
                       "home": teams.get(m.get("home_team_id")) or side.get("home") or "?",
                       "away": teams.get(m.get("away_team_id")) or m.get("away_name") or side.get("away") or "?",
                       "home_score": m.get("home_score"), "away_score": m.get("away_score"), "ff": ff})
-    return {"stats": keys, "stat": chosen, "players": players[:100], "games": games}
+    return {"stats": keys, "stat": chosen, "players": players[:100], "games": games,
+            "seasons": seasons, "weeks": weeks, "teams": team_names, "season": want_season}
 
 
 @router.get("/leaderboard")

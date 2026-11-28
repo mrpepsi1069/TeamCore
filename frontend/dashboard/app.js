@@ -26,17 +26,20 @@ const CUSTOM = {
 };
 // Teams, rosters, leagues, divisions, matches and standings live in one place now — old links still land on the right tab.
 const COMPETITION_TABS = {
-  competition: "leagues", leagues: "leagues", teams: "teams", records: "teams", team_members: "rosters",
+  competition: "leagues", leagues: "leagues", teams: "teams", team_members: "rosters",
   competitions: "seasons", divisions: "divisions", matches: "matches", leaderboard: "standings",
 };
 for (const [key, tab] of Object.entries(COMPETITION_TABS)) CUSTOM[key] = ["Teams & games", "viewer", (c) => P.competitionPage(c, tab)];
-CUSTOM.ff = ["Football Fusion", "viewer", (c) => P.ffPage(c)];
+// Parsed Football Fusion stats, sliced by season, week and team. `ff` keeps every old link working.
+CUSTOM.records = ["Records", "viewer", (c) => P.recordsPage(c)];
+CUSTOM.ff = ["Records", "viewer", (c) => P.recordsPage(c)];
 CUSTOM.polls = ["Polls", "viewer", (c) => P.pollsPage(c, "active")];
 CUSTOM.poll_archive = ["Polls", "viewer", (c) => P.pollsPage(c, "archive")];
 
 const NAV = [
   ["", ["overview"]],
-  ["Club", ["members", "competition", "ff"]],
+  ["Club", ["members", "competition"]],
+  ["Records", ["records"]],
   ["Community", ["polls", "giveaways", "suggestions", "announcements", "role_panels"]],
   ["Scheduling", ["schedule", "events", "countdowns", "scheduled_messages", "reminders"]],
   ["Players", ["player_profiles", "tryouts", "awards", "scouting_reports", "hall_of_fame"]],

@@ -24,7 +24,9 @@ or the shorter export, a score followed by the whole stat sheet as JSON:
 `parse_report` turns either into one dict (score, reporter, players with per-position stats) that a match
 stores and the dashboard renders. It tolerates missing extras: the score and at least one player are required.
 The short export never says which score belongs to which team, so its score carries `sides: "unconfirmed"`
-and the import dialog lets the manager flip it before saving. The parser is pure (no database or Discord
+and the import dialog lets the manager flip it before saving. It also carries no game title, so it has no season
+or week of its own — the dialog asks for both and they are stored on the stat sheet as `season` / `week`
+(see `match_period`). The parser is pure (no database or Discord
 imports), so the bot can reuse it.
 """
 
@@ -47,6 +49,36 @@ _POSITION = re.compile(r"^\s*\[([A-Za-z0-9]{1,6})\]\s*$")
 _STAT = re.compile(r"^\s{4,}([a-z_]+):\s*(-?\d+)\s*$", re.I)
 _LINKED = re.compile(r"^\s*Linked players:\s*(\d+)\s*/\s*(\d+)\s*$", re.I)
 _SCORE_JSON = re.compile(r"^\s*(\d{1,3})\s*[-–]\s*(\d{1,3})\s*///\s*(.+?)\s*$", re.S)
+_SEASON = re.compile(r"\bS(?:eason)?\s*(\d{1,2})\b", re.I)
+_WEEK = re.compile(r"\b(?:Week|Wk|W)\s*(\d{1,2})\b", re.I)
+
+
+def split_period(label: str | None) -> tuple[int | None, int | None]:
+    """A report title -> (season, week). “PFG || S2 Week 2” is (2, 2); teams write these loosely, so
+    “Season 2”, “S2 Wk 3” and “W3” are read too. A title with neither gives (None, None), which keeps the
+    match in the “all seasons / all weeks” view instead of guessing at a period."""
+    text = str(label or "")
+    season = _SEASON.search(text)
+    week = _WEEK.search(text)
+    return (int(season.group(1)) if season else None, int(week.group(1)) if week else None)
+
+
+def match_period(ff: dict | None) -> tuple[int | None, int | None]:
+    """A stored stat sheet -> (season, week). Explicit `season` / `week` fields win, because the short export has no
+    game title and gets its period from the import dialog; otherwise the title line decides. Either may be missing."""
+    ff = ff or {}
+    season, week = split_period(ff.get("game"))
+    try:  # a hand-edited document shouldn't break the page, and each field stands on its own
+        if ff.get("season") is not None:
+            season = int(ff["season"])
+    except (TypeError, ValueError):
+        pass
+    try:
+        if ff.get("week") is not None:
+            week = int(ff["week"])
+    except (TypeError, ValueError):
+        pass
+    return season, week
 
 
 def _unwrap(text: str) -> str:

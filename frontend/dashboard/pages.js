@@ -526,7 +526,15 @@ function openStatsImport(onSaved) {
   const mineField = h("div", { class: "field hidden" }, h("label", {}, "My team"), mineSel);
   const flip = h("input", { type: "checkbox", onchange: () => paint() });
   const flipField = h("label", { class: "row hidden" }, flip, " My team lost — flip the score");
-  const confirm = h("div", { class: "card tight hidden" }, confirmLead, confirmScore, mineField, flipField);
+  // The short export (“27 - 25 /// {…}”) has no game title, so it can't say its own season or week.
+  const seasonIn = h("input", { type: "number", min: 1, max: 99, placeholder: "2" });
+  const weekIn = h("input", { type: "number", min: 1, max: 99, placeholder: "2" });
+  const periodField = h("div", { class: "hidden" },
+    h("div", { class: "row" },
+      h("div", { class: "field" }, h("label", {}, "Season"), seasonIn),
+      h("div", { class: "field" }, h("label", {}, "Week"), weekIn)),
+    h("div", { class: "help" }, "This export has no game title, so it can't say which season or week it belongs to — set them here and Records can slice it."));
+  const confirm = h("div", { class: "card tight hidden" }, confirmLead, confirmScore, mineField, flipField, periodField);
 
   function paint() {
     if (!parsed) return;
@@ -546,6 +554,11 @@ function openStatsImport(onSaved) {
     mineField.classList.toggle("hidden", mineSel.options.length < 2);
     flip.checked = false;
     flipField.classList.toggle("hidden", p.sides_confirmed);
+    if (!p.game) {  // prefill from the last imported game, so a mid-season export lands in the right week
+      if (!seasonIn.value && p.last_season) seasonIn.value = String(p.last_season);
+      if (!weekIn.value && p.last_week) weekIn.value = String(p.last_week);
+    }
+    periodField.classList.toggle("hidden", !!p.game);
     confirm.classList.remove("hidden");
     paint();
   }
@@ -640,7 +653,13 @@ function openStatsImport(onSaved) {
           return;
         }
         const body = { sport: sport.value, played_at: when.value ? new Date(when.value).toISOString() : undefined, apply_record: records.checked };
-        if (ff) { body.report = report.value; body.my_team = mineSel.value; body.flip = flip.checked; }
+        if (ff) {
+          body.report = report.value; body.my_team = mineSel.value; body.flip = flip.checked;
+          if (!parsed.game) {  // a titled report brings its own period; a short export takes these
+            if (seasonIn.value) body.season = Number(seasonIn.value);
+            if (weekIn.value) body.week = Number(weekIn.value);
+          }
+        }
         else {
           body.home_team_id = Number(home.value);
           body.home_score = hs.value === "" ? undefined : Number(hs.value);
@@ -677,23 +696,46 @@ async function matchesBody(el) {
 
 // ───────── Football Fusion ─────────
 const statName = (s) => String(s || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+const periodName = (s, w) => [s ? `S${s}` : "", w ? `Week ${w}` : ""].filter(Boolean).join(" · ") || "—";
 
-function ffPage(c) {
-  clear(c).append(pageHead({ kicker: "Competition", title: "Football Fusion",
-    sub: "Only Football Fusion game reports are parsed into stats, so this is the one place with a stat comparison leaderboard." }));
-  const comp = h("select", { onchange: () => load() }, opt("", "All competitions"), state.gmeta.competitions.map((x) => opt(x, x)));
-  const stat = h("select", { onchange: () => load() });
+function recordsPage(c) {
+  clear(c).append(pageHead({ kicker: "Stats", title: "Records",
+    sub: "Only Football Fusion game reports are parsed into stats. Every report is totalled per player and position, and can be read by season, by week or by team." }));
+  const season = h("select", { "aria-label": "Season", onchange: () => load() });
+  const week = h("select", { "aria-label": "Week", onchange: () => load() });
+  const team = h("select", { "aria-label": "Team", onchange: () => load() });
+  const comp = h("select", { "aria-label": "Competition", onchange: () => load() }, opt("", "All competitions"), state.gmeta.competitions.map((x) => opt(x, x)));
+  const stat = h("select", { "aria-label": "Stat", onchange: () => load() });
   const out = h("div", {});
-  c.append(h("div", { class: "card tight filters" }, comp, stat, h("span", { class: "spacer" })), out);
+  c.append(h("div", { class: "card tight filters" }, season, week, team, comp, stat, h("span", { class: "spacer" })), out);
+
+  // Rebuild a filter's options from the API, keeping the current choice when it still exists.
+  const fill = (sel, values, blank, label) => {
+    const was = sel.value;
+    clear(sel).append(opt("", blank), ...values.map((v) => opt(String(v), label(v), String(v) === was)));
+    if (!values.some((v) => String(v) === was)) sel.value = "";
+  };
 
   async function load() {
     clear(out).append(spinner());
     try {
-      const res = await g(`/ff?competition=${encodeURIComponent(comp.value)}&stat=${encodeURIComponent(stat.value)}`);
-      clear(stat).append(...(res.stats.length ? res.stats.map((s) => opt(s, statName(s), s === res.stat)) : [opt("", "No stats yet")]));
+      const askedWeek = week.value;
+      const qs = new URLSearchParams({ stat: stat.value, competition: comp.value, season: season.value, week: week.value, team: team.value });
+      const res = await g(`/ff?${qs}`);
+      fill(season, res.seasons, "All seasons", (s) => `S${s}`);
+      // A week picked without a season is resolved to the latest season by the API — show that here.
+      if (res.season != null && [...season.options].some((o) => o.value === String(res.season))) season.value = String(res.season);
+      fill(week, res.weeks, "All weeks", (w) => `Week ${w}`);
+      if (askedWeek && !week.value) return load();  // that week isn't in this season — reload without it
+      fill(team, res.teams, "All teams", (t) => t);
+      if (!res.stats.length) clear(stat).append(opt("", "No stats yet"));
+      else if (!res.stats.includes(stat.value)) clear(stat).append(...res.stats.map((s) => opt(s, statName(s), s === res.stat)));
       clear(out);
       if (!res.players.length) {
-        out.append(h("div", { class: "card empty" }, "No Football Fusion stats yet — import a game report from the Matches tab."));
+        const sliced = season.value || week.value || team.value || comp.value;
+        out.append(h("div", { class: "card empty" }, sliced
+          ? "Nothing parsed for that slice yet — try another season, week, team or competition."
+          : "No Football Fusion stats yet — import a game report from the Matches tab."));
         return;
       }
       const leaderRows = res.players.map((p, i) => h("tr", {},
@@ -708,12 +750,15 @@ function ffPage(c) {
       const leaders = h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, leaderHead)),
         h("tbody", {}, leaderRows)));
-      out.append(h("h2", {}, `${statName(res.stat)} leaders`), leaders);
+      const scope = [season.value ? `S${season.value}` : (week.value ? "all seasons" : ""),
+        week.value ? `Week ${week.value}` : "", team.value, comp.value].filter(Boolean).join(" · ");
+      out.append(h("h2", {}, `${statName(res.stat)} leaders${scope ? ` — ${scope}` : ""}`), leaders);
 
       if (res.games.length) {
-        const gameHead = ["Date", "Match", "Score", "Reported by", ""].map((x) => h("th", {}, x));
+        const gameHead = ["Date", "Period", "Match", "Score", "Reported by", ""].map((x) => h("th", {}, x));
         const gameRows = res.games.map((gm) => h("tr", {},
           h("td", {}, fmtDate(gm.played_at)),
+          h("td", {}, periodName(gm.season, gm.week)),
           h("td", {}, `${gm.home} vs ${gm.away}`),
           h("td", {}, `${gm.home_score} – ${gm.away_score}`),
           h("td", {}, gm.ff?.reporter?.name || "—"),
@@ -728,7 +773,7 @@ function ffPage(c) {
   load();
 }
 
-export { ffPage };
+export { recordsPage };
 
 async function leaguesBody(el) {
   const [{ items: teams }, leaguesRes] = await Promise.all([
