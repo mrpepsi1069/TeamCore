@@ -81,6 +81,65 @@ def match_period(ff: dict | None) -> tuple[int | None, int | None]:
     return season, week
 
 
+def match_team(name: str, teams: list) -> dict | None:
+    """A report's team name (often a full college name) → a dashboard team: exact first, then a unique overlap."""
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    exact = [t for t in teams if (t.get("name_lower") or str(t.get("name") or "").lower()) == key]
+    if len(exact) == 1:
+        return exact[0]
+    near = [t for t in teams if t.get("name_lower") and (key in t["name_lower"] or t["name_lower"] in key)]
+    return near[0] if len(near) == 1 else None
+
+
+def player_team(p: dict, teams: list, roster: dict) -> str | None:
+    """The team a stat-sheet player belongs to: the dashboard roster link first, then the team the report names
+    (matched to a dashboard team where possible)."""
+    who = str(p.get("user_id")) if p.get("user_id") else "name:" + str(p.get("name") or "").strip().lower()
+    reported = str(p.get("team") or "").strip()
+    known = match_team(reported, teams) if reported else None
+    return roster.get(who) or (known or {}).get("name") or reported or None
+
+
+def player_rows(matches: list, teams: list, roster: dict, season: int | None = None,
+                week: int | None = None) -> list[dict]:
+    """Stat sheets → one row per player and position: games played, totals and averages.
+
+    This is the one implementation of the numbers Records ranks, shared by the dashboard route and the bot's weekly
+    leaders post, so a channel and the page can never disagree. A player is grouped by Discord id when the report
+    linked them, otherwise by name. With `season` / `week` the totals cover only those games."""
+    rows: dict = {}
+    for match in matches:
+        s, w = match_period(match.get("ff"))
+        if (season is not None and s != season) or (week is not None and w != week):
+            continue
+        for p in (match.get("ff") or {}).get("players") or []:
+            name = str(p.get("name") or "").strip()
+            if not name:
+                continue
+            who = str(p.get("user_id")) if p.get("user_id") else "name:" + name.lower()
+            positions = p.get("positions") or {}
+            if not positions and isinstance(p.get("stats"), dict):
+                positions = {"—": p["stats"]}
+            for pos, stats in positions.items():
+                if not isinstance(stats, dict):
+                    continue
+                row = rows.setdefault((who, pos), {"name": name, "user_id": p.get("user_id"), "position": pos,
+                                                   "team": player_team(p, teams, roster), "games": set(), "totals": {}})
+                row["games"].add(str(match["_id"]))
+                for k, v in stats.items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        row["totals"][k] = row["totals"].get(k, 0) + v
+    out = []
+    for row in rows.values():
+        gp = len(row["games"])
+        out.append({"name": row["name"], "user_id": row["user_id"], "position": row["position"],
+                    "team": row["team"], "games": gp, "totals": row["totals"],
+                    "averages": {k: round(v / gp, 1) for k, v in row["totals"].items()} if gp else {}})
+    return out
+
+
 def _unwrap(text: str) -> str:
     """Some FF exports wrap the report in JSON — accept {"report": "…"} (or a few common key names) too."""
     t = (text or "").strip()

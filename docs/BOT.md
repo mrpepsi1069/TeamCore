@@ -187,6 +187,8 @@ countdowns are re-checked from the database every 20 seconds, and their buttons 
 | `/leaderboard teams/rings/awards` | Paginated rankings | Everyone |
 | `/leaderboard cash` | The richest members across every server the bot is in | Everyone |
 | `/leaderboard post` | Live leaderboard that edits itself when records change | Manager |
+| `/records post` | Post this week's parsed stat leaders to the results channel now | Manager |
+| `/records digest` | The weekly leaders post: schedule, channel, on/off | Manager |
 | `/stats setup/add/remove/config/update` | Auto-updating, non-joinable stat voice channels (members, boosts, team records, custom) | Admin |
 | `/lock`, `/unlock` | Lock a channel (or `server_wide`); the original @everyone overwrite is restored exactly | Manage Channels / Manager |
 | `/poll create/end/results` | Polls: anonymous, multi-choice, auto-close | Staff |

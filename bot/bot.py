@@ -89,6 +89,7 @@ COGS = [
     "cogs.announcement", "cogs.backup", "cogs.memberstats", "cogs.suggestion",
     # website dashboard bridge + automation (additive: the bot runs fine without the website)
     "cogs.dashboard_bridge", "cogs.automation", "cogs.roster", "cogs.match", "cogs.economy",
+    "cogs.recordsdigest",
 ]
 
 

@@ -18,7 +18,7 @@ from database import teams as T
 from backend.db import db as handle
 from backend.resources import bump_team, channel_ok, finish, notify_records, post_result, role_ok
 from backend.util import now, oid, ser
-from shared.fusion import SPORTS, match_period, parse_report, split_period
+from shared.fusion import SPORTS, match_period, match_team, parse_report, player_rows, player_team, split_period
 
 router = APIRouter(prefix="/api/guilds/{gid}", tags=["features"])
 
@@ -160,15 +160,9 @@ async def delete_team_note(team_id: int, item_id: str, ctx: Ctx = Depends(guild_
 
 
 def _report_team(name: str, teams: list) -> dict | None:
-    """Match a report's team name (often a full college name) to a dashboard team, exact first, then unique overlap."""
-    key = (name or "").strip().lower()
-    if not key:
-        return None
-    exact = [t for t in teams if (t.get("name_lower") or t.get("name", "").lower()) == key]
-    if len(exact) == 1:
-        return exact[0]
-    near = [t for t in teams if t.get("name_lower") and (key in t["name_lower"] or t["name_lower"] in key)]
-    return near[0] if len(near) == 1 else None
+    """A report's team name → a dashboard team. Shared with the bot, so a stat sheet resolves to the same team
+    on the page and in the weekly leaders post."""
+    return match_team(name, teams)
 
 
 def _ff_sides(game: dict, teams: list, my_team: str = "", flip: bool = False) -> dict:
@@ -439,15 +433,6 @@ async def _ff_load(ctx: Ctx, competition: str) -> tuple[list, list, dict, dict]:
     return matches, team_docs, teams, roster
 
 
-def _player_team(p: dict, team_docs: list, roster: dict) -> str | None:
-    """The team a stat-sheet player belongs to: the dashboard roster link first, then the team the report names
-    (matched to a dashboard team where possible)."""
-    who = str(p.get("user_id")) if p.get("user_id") else "name:" + str(p.get("name") or "").strip().lower()
-    reported = str(p.get("team") or "").strip()
-    known = _report_team(reported, team_docs) if reported else None
-    return roster.get(who) or (known or {}).get("name") or reported or None
-
-
 def _int_param(value: str) -> int | None:
     """A query-string period ("2"), or None for “all"."""
     try:
@@ -493,46 +478,17 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
         s, w = periods[mid]
         return (want_season is None or s == want_season) and (want_week is None or w == want_week)
 
-    rows: dict = {}
+    # The totals themselves live in shared.fusion.player_rows: the bot's weekly leaders post ranks the same rows,
+    # so a channel and this page can't drift apart.
+    team_names = {r["team"] for r in player_rows(matches, team_docs, roster) if r["team"]}  # all periods, for the filter
+    players = player_rows(matches, team_docs, roster, want_season, want_week)
     seen: dict = {}
-    team_names: set = set()
-    for match in matches:
-        mid = str(match["_id"])
-        for p in (match.get("ff") or {}).get("players") or []:
-            name = str(p.get("name") or "").strip()
-            if not name:
-                continue
-            who = str(p.get("user_id")) if p.get("user_id") else "name:" + name.lower()
-            row_team = _player_team(p, team_docs, roster)
-            if row_team:  # every team the stat sheets name, so the filter keeps its options on an empty slice
-                team_names.add(row_team)
-            if not in_slice(mid):
-                continue
-            positions = p.get("positions") or {}
-            if not positions and isinstance(p.get("stats"), dict):
-                positions = {"—": p["stats"]}
-            for pos, stats in positions.items():
-                if not isinstance(stats, dict):
-                    continue
-                row = rows.setdefault((who, pos), {"name": name, "user_id": p.get("user_id"), "position": pos,
-                                                   "team": row_team, "games": set(), "totals": {}})
-                row["games"].add(str(match["_id"]))
-                for k, v in stats.items():
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
-                        row["totals"][k] = row["totals"].get(k, 0) + v
-                        seen[k] = seen.get(k, 0) + 1
-
-    kept = list(rows.values())
+    for r in players:  # the default stat is the one most of the slice's players have
+        for k in r["totals"]:
+            seen[k] = seen.get(k, 0) + 1
     if team:
         wanted = team.strip().lower()
-        kept = [r for r in kept if (r["team"] or "").lower() == wanted]
-
-    players = []
-    for row in kept:
-        gp = len(row["games"])
-        players.append({"name": row["name"], "user_id": row["user_id"], "position": row["position"], "team": row["team"],
-                        "games": gp, "totals": row["totals"],
-                        "averages": {k: round(v / gp, 1) for k, v in row["totals"].items()} if gp else {}})
+        players = [r for r in players if (r["team"] or "").lower() == wanted]
     keys = sorted(seen)
     chosen = stat if stat in seen else (max(keys, key=lambda k: (seen[k], k)) if keys else "")
     if chosen:
@@ -588,7 +544,7 @@ async def ff_player(name: str = "", user_id: str = "", position: str = "", compe
         for p in ff.get("players") or []:
             if not same_player(p):
                 continue
-            mine = _player_team(p, team_docs, roster)
+            mine = player_team(p, team_docs, roster)
             if want_team and (mine or "").lower() != want_team:
                 continue
             positions = p.get("positions") or {}
