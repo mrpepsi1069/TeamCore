@@ -423,6 +423,31 @@ async def ff_preview(body: dict = Body(...), ctx: Ctx = Depends(guild_ctx)):
             "sides_confirmed": (game["score"].get("sides") or "report") != "unconfirmed"}
 
 
+async def _ff_load(ctx: Ctx, competition: str) -> tuple[list, list, dict, dict]:
+    """Every Football Fusion match (newest first) plus the teams and roster links the stat sheets are resolved against."""
+    q = {"guild_id": ctx.guild_id, "ff": {"$type": "object"},
+         "$or": [{"ff.sport": {"$exists": False}}, {"ff.sport": "ff"}]}
+    if competition:
+        q["competition"] = {"$regex": f"^{re.escape(competition)}$", "$options": "i"}  # matches store no lowercase copy
+    matches = await coll("matches").find(q).sort("played_at", -1).limit(500).to_list(None)
+    team_docs = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
+    teams = {t["team_id"]: t.get("name") for t in team_docs}
+    roster: dict = {}
+    for m in await coll("team_members").find({"guild_id": ctx.guild_id}).to_list(None):
+        if str(m.get("user_id") or "") not in roster:
+            roster[str(m.get("user_id"))] = teams.get(m.get("team_id"))
+    return matches, team_docs, teams, roster
+
+
+def _player_team(p: dict, team_docs: list, roster: dict) -> str | None:
+    """The team a stat-sheet player belongs to: the dashboard roster link first, then the team the report names
+    (matched to a dashboard team where possible)."""
+    who = str(p.get("user_id")) if p.get("user_id") else "name:" + str(p.get("name") or "").strip().lower()
+    reported = str(p.get("team") or "").strip()
+    known = _report_team(reported, team_docs) if reported else None
+    return roster.get(who) or (known or {}).get("name") or reported or None
+
+
 def _int_param(value: str) -> int | None:
     """A query-string period ("2"), or None for “all"."""
     try:
@@ -455,17 +480,7 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
 
     A report's own title line carries the period (“PFG || S2 Week 2”). It is read here rather than stored when the
     match was imported, so reports imported before these filters existed slice exactly like new ones."""
-    q = {"guild_id": ctx.guild_id, "ff": {"$type": "object"},
-         "$or": [{"ff.sport": {"$exists": False}}, {"ff.sport": "ff"}]}
-    if competition:
-        q["competition"] = {"$regex": f"^{re.escape(competition)}$", "$options": "i"}  # matches store no lowercase copy
-    matches = await coll("matches").find(q).sort("played_at", -1).limit(500).to_list(None)
-    team_docs = await coll("teams").find({"guild_id": ctx.guild_id}).to_list(None)
-    teams = {t["team_id"]: t.get("name") for t in team_docs}
-    roster: dict = {}
-    for m in await coll("team_members").find({"guild_id": ctx.guild_id}).to_list(None):
-        if str(m.get("user_id") or "") not in roster:
-            roster[str(m.get("user_id"))] = teams.get(m.get("team_id"))
+    matches, team_docs, teams, roster = await _ff_load(ctx, competition)
 
     periods = {str(m["_id"]): match_period(m.get("ff")) for m in matches}
     want_season, want_week = _int_param(season), _int_param(week)
@@ -473,23 +488,26 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
     if want_season is None and want_week is not None and seasons:
         want_season = seasons[-1]  # a week number only means something inside a season — read it in the latest one
     weeks = sorted({w for s, w in periods.values() if w is not None and (want_season is None or s == want_season)})
-    if want_season is not None:
-        matches = [m for m in matches if periods[str(m["_id"])][0] == want_season]
-    if want_week is not None:
-        matches = [m for m in matches if periods[str(m["_id"])][1] == want_week]
+
+    def in_slice(mid: str) -> bool:
+        s, w = periods[mid]
+        return (want_season is None or s == want_season) and (want_week is None or w == want_week)
 
     rows: dict = {}
     seen: dict = {}
+    team_names: set = set()
     for match in matches:
+        mid = str(match["_id"])
         for p in (match.get("ff") or {}).get("players") or []:
             name = str(p.get("name") or "").strip()
             if not name:
                 continue
             who = str(p.get("user_id")) if p.get("user_id") else "name:" + name.lower()
-            # The JSON export names a team per player; a text report doesn't, so the dashboard roster fills in.
-            reported = str(p.get("team") or "").strip()
-            known = _report_team(reported, team_docs) if reported else None
-            row_team = roster.get(who) or (known or {}).get("name") or reported or None
+            row_team = _player_team(p, team_docs, roster)
+            if row_team:  # every team the stat sheets name, so the filter keeps its options on an empty slice
+                team_names.add(row_team)
+            if not in_slice(mid):
+                continue
             positions = p.get("positions") or {}
             if not positions and isinstance(p.get("stats"), dict):
                 positions = {"—": p["stats"]}
@@ -505,7 +523,6 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
                         seen[k] = seen.get(k, 0) + 1
 
     kept = list(rows.values())
-    team_names = sorted({r["team"] for r in kept if r["team"]}, key=str.lower)
     if team:
         wanted = team.strip().lower()
         kept = [r for r in kept if (r["team"] or "").lower() == wanted]
@@ -522,7 +539,7 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
         players.sort(key=lambda r: (-r["totals"].get(chosen, 0), r["name"].lower()))
 
     games = []
-    for m in matches[:20]:
+    for m in [m for m in matches if in_slice(str(m["_id"]))][:20]:
         ff = m.get("ff") or {}
         side = ff.get("score") or {}
         period = periods[str(m["_id"])]
@@ -532,7 +549,78 @@ async def ff_stats(stat: str = "", competition: str = "", season: str = "", week
                       "away": teams.get(m.get("away_team_id")) or m.get("away_name") or side.get("away") or "?",
                       "home_score": m.get("home_score"), "away_score": m.get("away_score"), "ff": ff})
     return {"stats": keys, "stat": chosen, "players": players[:100], "games": games,
-            "seasons": seasons, "weeks": weeks, "teams": team_names, "season": want_season}
+            "seasons": seasons, "weeks": weeks, "teams": sorted(team_names, key=str.lower), "season": want_season}
+
+
+@router.get("/ff/player")
+async def ff_player(name: str = "", user_id: str = "", position: str = "", competition: str = "",
+                    season: str = "", week: str = "", team: str = "", ctx: Ctx = Depends(guild_ctx)):
+    """One Records row's games: the stat sheets already stored on the matches, newest first.
+
+    A row is identified exactly as Records groups it — by Discord id when the report linked the player, otherwise by
+    name — and the same filters are applied, so the log adds up to the total the row shows."""
+    matches, team_docs, teams, roster = await _ff_load(ctx, competition)
+    periods = {str(m["_id"]): match_period(m.get("ff")) for m in matches}
+    want_season, want_week = _int_param(season), _int_param(week)
+    if want_season is None and want_week is not None:
+        seasons = sorted({s for s, _ in periods.values() if s is not None})
+        want_season = seasons[-1] if seasons else None
+    want_team = team.strip().lower()
+    want_uid = user_id.strip()
+    want_name = name.strip().lower()
+
+    def same_player(p: dict) -> bool:
+        if want_uid:
+            return str(p.get("user_id") or "") == want_uid
+        return str(p.get("name") or "").strip().lower() == want_name
+
+    games = []
+    for m in matches:
+        mid = str(m["_id"])
+        s, w = periods[mid]
+        if (want_season is not None and s != want_season) or (want_week is not None and w != want_week):
+            continue
+        ff = m.get("ff") or {}
+        side = ff.get("score") or {}
+        home = teams.get(m.get("home_team_id")) or side.get("home") or "?"
+        away = teams.get(m.get("away_team_id")) or m.get("away_name") or side.get("away") or "?"
+        hs, as_ = m.get("home_score"), m.get("away_score")
+        for p in ff.get("players") or []:
+            if not same_player(p):
+                continue
+            mine = _player_team(p, team_docs, roster)
+            if want_team and (mine or "").lower() != want_team:
+                continue
+            positions = p.get("positions") or {}
+            if not positions and isinstance(p.get("stats"), dict):
+                positions = {"—": p["stats"]}
+            if position:
+                stats = positions.get(position)
+                if not isinstance(stats, dict):
+                    continue  # this report has no line for the position the row is grouped by
+            else:  # no position on the row — show the whole sheet for that game
+                stats = {}
+                for line in positions.values():
+                    if isinstance(line, dict):
+                        for k, v in line.items():
+                            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                                stats[k] = stats.get(k, 0) + v
+                if not stats:
+                    continue
+            # Which side was the player on? The report's own team (or the roster) decides; a text report, which names
+            # no per-player team, puts this team on the home side.
+            if mine and str(away).lower() == mine.lower() and str(home).lower() != mine.lower():
+                opponent, us, them = home, as_, hs
+            else:
+                opponent, us, them = away, hs, as_
+            result = None
+            if isinstance(us, int) and isinstance(them, int):
+                result = "W" if us > them else ("L" if us < them else "T")
+            games.append({"id": mid, "played_at": m.get("played_at"), "season": s, "week": w,
+                          "competition": m.get("competition"), "opponent": opponent,
+                          "our_score": us, "their_score": them, "result": result, "stats": stats})
+            break  # one report holds one line per player
+    return {"name": name, "position": position, "games": games}
 
 
 @router.get("/leaderboard")

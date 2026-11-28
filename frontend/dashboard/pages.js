@@ -709,36 +709,68 @@ function recordsPage(c) {
   const out = h("div", {});
   c.append(h("div", { class: "card tight filters" }, season, week, team, comp, stat, h("span", { class: "spacer" })), out);
 
-  // Rebuild a filter's options from the API, keeping the current choice when it still exists.
+  // Rebuild a filter's options from the API. The current choice is always kept — an empty slice must not silently
+  // drop the filters that produced it — so a value the API no longer lists is added back as its own option.
   const fill = (sel, values, blank, label) => {
     const was = sel.value;
-    clear(sel).append(opt("", blank), ...values.map((v) => opt(String(v), label(v), String(v) === was)));
-    if (!values.some((v) => String(v) === was)) sel.value = "";
+    const list = was && !values.some((v) => String(v) === was) ? [...values, was] : values;
+    clear(sel).append(opt("", blank), ...list.map((v) => opt(String(v), label(v), String(v) === was)));
+    sel.value = was;
   };
+
+  const statsLine = (s) => Object.entries(s || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") || "—";
+
+  // The games behind one leaderboard row. Same filters as the page, so the lines add up to the total shown.
+  async function openLog(p) {
+    const qs = new URLSearchParams({ name: p.name, position: p.position || "", competition: comp.value,
+      season: season.value, week: week.value, team: team.value });
+    if (p.user_id) qs.set("user_id", String(p.user_id));
+    const box = h("div", {}, spinner());
+    modal(`${p.name} — game log`, box, [{ label: "Close", onClick: (c) => c() }], { wide: true });
+    try {
+      const res = await g(`/ff/player?${qs}`);
+      clear(box);
+      if (!res.games.length) {
+        box.append(h("div", { class: "card empty" }, "No games behind this total with the filters you have on."));
+        return;
+      }
+      box.append(h("p", { class: "page-sub" }, `${res.games.length} game${res.games.length === 1 ? "" : "s"} behind this total`
+        + `${p.position ? ` at ${p.position}` : ""}, newest first.`));
+      const head = ["Date", "Period", "Opponent", "Score", "Stat line"].map((x) => h("th", {}, x));
+      const rows = res.games.map((gm) => h("tr", {},
+        h("td", {}, fmtDate(gm.played_at)),
+        h("td", {}, periodName(gm.season, gm.week)),
+        h("td", {}, gm.opponent || "—"),
+        h("td", {}, gm.our_score == null || gm.their_score == null
+          ? "—" : `${gm.our_score}–${gm.their_score}${gm.result ? ` ${gm.result}` : ""}`),
+        h("td", {}, statsLine(gm.stats))));
+      box.append(h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, head)), h("tbody", {}, rows))));
+    } catch (e) { clear(box).append(errorBox(e)); }
+  }
 
   async function load() {
     clear(out).append(spinner());
     try {
-      const askedWeek = week.value;
       const qs = new URLSearchParams({ stat: stat.value, competition: comp.value, season: season.value, week: week.value, team: team.value });
       const res = await g(`/ff?${qs}`);
       fill(season, res.seasons, "All seasons", (s) => `S${s}`);
       // A week picked without a season is resolved to the latest season by the API — show that here.
       if (res.season != null && [...season.options].some((o) => o.value === String(res.season))) season.value = String(res.season);
       fill(week, res.weeks, "All weeks", (w) => `Week ${w}`);
-      if (askedWeek && !week.value) return load();  // that week isn't in this season — reload without it
       fill(team, res.teams, "All teams", (t) => t);
       if (!res.stats.length) clear(stat).append(opt("", "No stats yet"));
       else if (!res.stats.includes(stat.value)) clear(stat).append(...res.stats.map((s) => opt(s, statName(s), s === res.stat)));
       clear(out);
       if (!res.players.length) {
-        const sliced = season.value || week.value || team.value || comp.value;
-        out.append(h("div", { class: "card empty" }, sliced
-          ? "Nothing parsed for that slice yet — try another season, week, team or competition."
+        const picked = [season.value ? `S${season.value}` : "", week.value ? `Week ${week.value}` : "",
+          team.value, comp.value].filter(Boolean).join(" · ");
+        out.append(h("div", { class: "card empty" }, picked
+          ? `No parsed stats for ${picked}. Your filters are unchanged — try another season, week, team or competition.`
           : "No Football Fusion stats yet — import a game report from the Matches tab."));
         return;
       }
-      const leaderRows = res.players.map((p, i) => h("tr", {},
+      const leaderRows = res.players.map((p, i) => h("tr", { class: "clickable-row", title: "Show this player's game log", onclick: () => openLog(p) },
         h("td", {}, String(i + 1)),
         h("td", {}, h("b", {}, p.name), h("div", { class: "sub" }, p.user_id ? "Linked" : "Not linked")),
         h("td", {}, p.team || "—"),
@@ -752,7 +784,8 @@ function recordsPage(c) {
         h("tbody", {}, leaderRows)));
       const scope = [season.value ? `S${season.value}` : (week.value ? "all seasons" : ""),
         week.value ? `Week ${week.value}` : "", team.value, comp.value].filter(Boolean).join(" · ");
-      out.append(h("h2", {}, `${statName(res.stat)} leaders${scope ? ` — ${scope}` : ""}`), leaders);
+      out.append(h("h2", {}, `${statName(res.stat)} leaders${scope ? ` — ${scope}` : ""}`),
+        h("p", { class: "page-sub" }, "Click a player for the games behind their total."), leaders);
 
       if (res.games.length) {
         const gameHead = ["Date", "Period", "Match", "Score", "Reported by", ""].map((x) => h("th", {}, x));
